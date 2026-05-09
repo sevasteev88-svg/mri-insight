@@ -597,7 +597,7 @@ export default function MRIInsight() {
       <div style={P.pg}>
         <div style={P.top}><button onClick={() => setScr("dash")} style={P.bk}><ArrowLeft size={16} /> Назад</button><h2 style={P.pT}>Бібліотека норми</h2></div>
         <div style={P.ztabs}>{Object.entries(ZONE_GROUPS).map(([gk, gv]) => <div key={gk} style={P.ztGroup}><span style={P.ztGLabel}>{gv.icon} {gv.label}</span><div style={P.ztRow}>{Object.entries(ZONES).filter(([_, z]) => z.group === gk).map(([k, v]) => <button key={k} onClick={() => setSelZone(k)} style={selZone === k ? P.ztOn : P.zt}>{v.short}{(refs[k] || []).length > 0 && <span style={P.ztB}>{(refs[k] || []).length}</span>}</button>)}</div></div>)}</div>
-        <div style={{ ...P.upRow, gridTemplateColumns: "1fr 1fr 1fr" }}>
+        <div style={P.upRow}>
           <div style={P.upC} onClick={() => refIn.current?.click()}><Upload size={20} style={{ color: "#06b6d4" }} /><span style={P.upL}>JPEG знімки</span><input ref={refIn} type="file" multiple accept="image/*" style={{ display: "none" }} onChange={e => uploadImgs(e.target.files, "ref")} /></div>
           <div style={{ ...P.upC, opacity: pdfOk ? 1 : 0.4 }} onClick={() => pdfOk && pdfIn.current?.click()}><FileText size={20} style={{ color: "#a78bfa" }} /><span style={P.upL}>PDF книга</span><input ref={pdfIn} type="file" accept="application/pdf" style={{ display: "none" }} onChange={e => e.target.files[0] && uploadPdf(e.target.files[0])} /></div>
           <div style={P.upC} onClick={() => flash("Скопіюйте зображення та натисніть Ctrl+V")}><span style={{ fontSize: 20 }}>📋</span><span style={P.upL}>Вставити</span></div>
@@ -890,14 +890,14 @@ export default function MRIInsight() {
 // ═══════════ STYLES ═══════════
 const P = {
   app: { fontFamily: "'IBM Plex Sans',sans-serif", background: "#070b14", minHeight: "100vh", color: "#e2e8f0" },
-  pg: { maxWidth: 640, margin: "0 auto", padding: "12px 14px 72px" },
+  pg: { margin: "0 auto", padding: "12px 24px 72px" },
   hdr: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0 20px" },
   logo: { fontSize: 22, fontWeight: 700, display: "flex", alignItems: "center", letterSpacing: "-.3px", color: "#f1f5f9" },
   sub: { fontSize: 10, color: "#475569", marginTop: 1, fontFamily: "'JetBrains Mono',monospace" },
   iBtn: { background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 10, padding: 8, color: "#94a3b8", cursor: "pointer" },
   warn: { display: "flex", alignItems: "center", gap: 8, background: "rgba(245,158,11,.08)", border: "1px solid rgba(245,158,11,.18)", borderRadius: 10, padding: "10px 12px", marginBottom: 14 },
   ws: { fontSize: 11, color: "#94a3b8", marginTop: 1 },
-  g2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7, marginBottom: 12 },
+  g2: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 7, marginBottom: 12 },
   g3: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 7, marginBottom: 12 },
   act: { background: "linear-gradient(135deg,#111827,#0f172a)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 13, padding: "20px 12px", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: "pointer" },
   aIc: { width: 48, height: 48, borderRadius: 12, background: "rgba(6,182,212,.12)", color: "#06b6d4", display: "flex", alignItems: "center", justifyContent: "center" },
@@ -921,10 +921,10 @@ const P = {
   zt: { background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 8, padding: "5px 10px", fontSize: 11, color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 },
   ztOn: { background: "rgba(6,182,212,.11)", border: "1px solid rgba(6,182,212,.28)", borderRadius: 8, padding: "5px 10px", fontSize: 11, color: "#06b6d4", cursor: "pointer", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 },
   ztB: { fontSize: 9, background: "rgba(6,182,212,.18)", color: "#06b6d4", padding: "0 4px", borderRadius: 4, fontWeight: 600 },
-  upRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7, marginBottom: 12 },
+  upRow: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 7, marginBottom: 12 },
   upC: { background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 11, padding: "16px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer" },
   upL: { fontSize: 11, fontWeight: 600, color: "#94a3b8" },
-  iGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(64px,1fr))", gap: 4, marginBottom: 12 },
+  iGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(90px,1fr))", gap: 5, marginBottom: 12 },
   thBox: { position: "relative", aspectRatio: "1", borderRadius: 6, overflow: "hidden" },
   th: { width: "100%", height: "100%", objectFit: "cover", cursor: "pointer", display: "block", borderRadius: 6, border: "1px solid rgba(255,255,255,.06)" },
   thDel: { position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,.7)", border: "none", borderRadius: 4, padding: 2, color: "#ef4444", cursor: "pointer" },
@@ -974,14 +974,14 @@ const P = {
   panT: { fontSize: 17, fontWeight: 700, color: "#f1f5f9", marginBottom: 10 },
   pri: { width: "100%", background: "#06b6d4", border: "none", borderRadius: 9, padding: 10, fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", marginTop: 8, fontFamily: "'IBM Plex Sans',sans-serif", display: "flex", alignItems: "center", justifyContent: "center" },
   clX: { position: "absolute", top: -7, right: -7, background: "rgba(239,68,68,.82)", border: "none", borderRadius: "50%", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", cursor: "pointer", zIndex: 10 },
-  pdfPan: { background: "#111827", border: "1px solid rgba(255,255,255,.09)", borderRadius: 16, padding: 16, width: "95%", maxWidth: 560, maxHeight: "84vh", overflowY: "auto", position: "relative" },
+  pdfPan: { background: "#111827", border: "1px solid rgba(255,255,255,.09)", borderRadius: 16, padding: 16, width: "95%", maxWidth: 900, maxHeight: "84vh", overflowY: "auto", position: "relative" },
   pdfCtrl: { display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center", marginBottom: 8, padding: "6px 0", borderTop: "1px solid rgba(255,255,255,.05)", borderBottom: "1px solid rgba(255,255,255,.05)" },
   sm: { background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 6, padding: "4px 8px", fontSize: 10, color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 2 },
   rIn: { width: 38, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 4, padding: "3px 5px", fontSize: 10, color: "#e2e8f0", textAlign: "center", outline: "none" },
-  pdfG: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(74px,1fr))", gap: 5, marginBottom: 8 },
+  pdfG: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(100px,1fr))", gap: 6, marginBottom: 8 },
   pdfTh: { position: "relative", borderRadius: 6, overflow: "hidden", cursor: "pointer", transition: "border-color .15s" },
   pdfCh: { position: "absolute", top: 2, right: 2, background: "#06b6d4", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" },
   pdfN: { position: "absolute", bottom: 1, left: 1, background: "rgba(0,0,0,.7)", color: "#94a3b8", fontSize: 8, padding: "0 3px", borderRadius: 2, fontFamily: "'JetBrains Mono',monospace" },
-  refPan: { background: "#111827", border: "1px solid rgba(255,255,255,.09)", borderRadius: 16, padding: 16, width: "95%", maxWidth: 520, maxHeight: "84vh", overflowY: "auto", position: "relative" },
+  refPan: { background: "#111827", border: "1px solid rgba(255,255,255,.09)", borderRadius: 16, padding: 16, width: "95%", maxWidth: 800, maxHeight: "84vh", overflowY: "auto", position: "relative" },
   toast: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", background: "rgba(6,182,212,.88)", color: "#fff", padding: "8px 18px", borderRadius: 9, fontSize: 12, fontWeight: 600, zIndex: 200, boxShadow: "0 4px 16px rgba(0,0,0,.35)" },
 };
