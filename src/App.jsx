@@ -1,10 +1,58 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Settings, Upload, Plus, ArrowLeft, X, Zap, Shield, Brain, BookOpen,
   Eye, ChevronRight, AlertCircle, CheckCircle, Mic, MicOff, Search,
   EyeOff, Columns, FileText, Check, ExternalLink, ChevronLeft,
   Volume2, Square, Info
 } from "lucide-react";
+
+// ═══════════ IndexedDB HELPERS ═══════════
+const DB_NAME = "mri-insight-db";
+const DB_VER = 2;
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains("refs")) db.createObjectStore("refs");
+      if (!db.objectStoreNames.contains("studies")) db.createObjectStore("studies");
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbGet(store, key) {
+  const db = await openDB();
+  return new Promise((resolve) => {
+    const tx = db.transaction(store, "readonly");
+    const req = tx.objectStore(store).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  });
+}
+
+async function dbPut(store, key, value) {
+  const db = await openDB();
+  return new Promise((resolve) => {
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).put(value, key);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => resolve(false);
+  });
+}
+
+async function dbGetAll(store) {
+  const db = await openDB();
+  return new Promise((resolve) => {
+    const tx = db.transaction(store, "readonly");
+    const req = tx.objectStore(store).getAll();
+    const reqK = tx.objectStore(store).getAllKeys();
+    req.onsuccess = () => { reqK.onsuccess = () => { const obj = {}; reqK.result.forEach((k, i) => { obj[k] = req.result[i]; }); resolve(obj); }; };
+    req.onerror = () => resolve({});
+  });
+}
 
 const ZONES = {
   knee: { ua: "Колінний суглоб", short: "Коліно", en: "knee", group: "joints" },
@@ -270,8 +318,31 @@ export default function MRIInsight() {
     (async () => {
       try { const r = localStorage.getItem("mri-key"); if (r) { setApiKey(r); setApiKeyIn(r); } } catch {}
       try { const r = localStorage.getItem("mri-hist"); if (r) setStudies(JSON.parse(r)); } catch {}
+      // Load refs from IndexedDB
+      try {
+        const allRefs = await dbGetAll("refs");
+        if (Object.keys(allRefs).length > 0) setRefs(allRefs);
+      } catch {}
     })();
   }, []);
+
+  // Save refs to IndexedDB whenever they change
+  const refsInitialized = useRef(false);
+  useEffect(() => {
+    if (!refsInitialized.current) { refsInitialized.current = true; return; }
+    const saveRefs = async () => {
+      try {
+        const db = await openDB();
+        const tx = db.transaction("refs", "readwrite");
+        const store = tx.objectStore("refs");
+        store.clear();
+        Object.entries(refs).forEach(([zone, imgs]) => {
+          if (imgs.length > 0) store.put(imgs, zone);
+        });
+      } catch (e) { console.error("Failed to save refs:", e); }
+    };
+    saveRefs();
+  }, [refs]);
 
   const flash = m => { setToast(m); setTimeout(() => setToast(null), 2500); };
 
@@ -342,6 +413,18 @@ export default function MRIInsight() {
   const newStudy = () => {
     setStudy({ id: Date.now(), patientName: "", zone: "knee", activeSeq: "T2", activePlane: "Sag", series: {}, findings: null, status: "draft", date: new Date().toLocaleDateString("uk-UA") });
     setVnotes({}); setScr("new");
+  };
+
+  const loadStudy = async (id) => {
+    try {
+      const saved = await dbGet("studies", String(id));
+      if (saved) {
+        setStudy(saved);
+        setScr("results");
+      } else {
+        flash("Дані дослідження не знайдено");
+      }
+    } catch { flash("Помилка завантаження"); }
   };
 
   // Navigate to split view at specific slice
@@ -427,12 +510,12 @@ export default function MRIInsight() {
       }
 
       setProg(null); setScr("results");
-      // Save findings to localStorage (without images to save space)
+      // Save full study to IndexedDB
       try {
-        const saveData = { id: study.id, patientName: study.patientName, zone: study.zone, date: study.date, findings: study.findings, summary: study.summary, recommendation: study.recommendation, radio: study.radio, seriesInfo: Object.fromEntries(Object.entries(study.series).map(([k,v]) => [k, v.length])) };
-        localStorage.setItem("mri-last-result", JSON.stringify(saveData));
+        await dbPut("studies", String(study.id), { ...study, findings: study.findings, summary: study.summary, recommendation: study.recommendation, radio: study.radio });
       } catch {}
-      const meta = { id: study.id, pn: study.patientName, z: study.zone, d: study.date, ic: all.length };
+      const fc = (study.findings || []).length;
+      const meta = { id: study.id, pn: study.patientName, z: study.zone, d: study.date, ic: all.length, fc };
       const upd = [meta, ...studies.slice(0, 24)];
       setStudies(upd);
       try { localStorage.setItem("mri-hist", JSON.stringify(upd)); } catch {}
@@ -586,7 +669,7 @@ export default function MRIInsight() {
       </div>
       <div style={P.chips}>{Object.entries(ZONE_GROUPS).map(([gk, gv]) => <div key={gk} style={P.chipGroup}><span style={P.chipGLabel}>{gv.icon} {gv.label}</span><div style={P.chipRow}>{Object.entries(ZONES).filter(([_, z]) => z.group === gk).map(([k, v]) => <div key={k} style={P.chip}><span style={P.chN}>{v.short}</span><span style={P.chC}>{(refs[k] || []).length}</span></div>)}</div></div>)}</div>
       {studies.length > 0 && <div><h3 style={P.secT}>Останні дослідження</h3>
-        {studies.map(s => <div key={s.id} style={P.sCard}><div><p style={P.sN}>{s.pn || "Без імені"}</p><p style={P.sM}>{ZONES[s.z]?.ua} · {s.ic} зрізів · {s.d}</p></div></div>)}
+        {studies.map(s => <div key={s.id} onClick={() => loadStudy(s.id)} style={{ ...P.sCard, cursor: "pointer" }}><div><p style={P.sN}>{s.pn || "Без імені"}</p><p style={P.sM}>{ZONES[s.z]?.ua} · {s.ic} зрізів · {s.d}</p></div><div style={{ display: "flex", alignItems: "center", gap: 6 }}>{s.fc > 0 ? <span style={{ fontSize: 11, fontWeight: 600, background: "rgba(239,68,68,.12)", color: "#ef4444", padding: "2px 8px", borderRadius: 6 }}>{s.fc} знахідок</span> : <span style={{ fontSize: 11, fontWeight: 600, background: "rgba(16,185,129,.12)", color: "#10b981", padding: "2px 8px", borderRadius: 6 }}>Норма</span>}<ChevronRight size={14} style={{ color: "#475569" }} /></div></div>)}
       </div>}
     </div>
   );
