@@ -3,7 +3,7 @@ import {
   Settings, Upload, Plus, ArrowLeft, X, Zap, Shield, Brain, BookOpen,
   Eye, ChevronRight, AlertCircle, CheckCircle, Mic, MicOff, Search,
   EyeOff, Columns, FileText, Check, ExternalLink, ChevronLeft,
-  Volume2, Square, Info
+  Volume2, Square, Info, Archive, Trash2, RotateCcw, Paperclip
 } from "lucide-react";
 
 // ═══════════ IndexedDB HELPERS ═══════════
@@ -281,8 +281,9 @@ export default function MRIInsight() {
   const [pdfOk, setPdfOk] = useState(false);
   const [toast, setToast] = useState(null);
   const [rf, setRf] = useState(""); const [rt, setRt] = useState("");
+  const [showArchive, setShowArchive] = useState(false);
 
-  const refIn = useRef(null), pdfIn = useRef(null), patIn = useRef(null), recRef = useRef(null);
+  const refIn = useRef(null), pdfIn = useRef(null), patIn = useRef(null), recRef = useRef(null), attachIn = useRef(null);
 
   // Clipboard paste handler for library
   useEffect(() => {
@@ -425,6 +426,47 @@ export default function MRIInsight() {
         flash("Дані дослідження не знайдено");
       }
     } catch { flash("Помилка завантаження"); }
+  };
+
+  const archiveStudy = async (id) => {
+    const upd = studies.map(s => s.id === id ? { ...s, archived: true } : s);
+    setStudies(upd);
+    try { localStorage.setItem("mri-hist", JSON.stringify(upd)); } catch {}
+    flash("Дослідження відправлено в архів");
+    if (study?.id === id) setScr("dash");
+  };
+
+  const unarchiveStudy = async (id) => {
+    const upd = studies.map(s => s.id === id ? { ...s, archived: false } : s);
+    setStudies(upd);
+    try { localStorage.setItem("mri-hist", JSON.stringify(upd)); } catch {}
+    flash("Дослідження відновлено з архіву");
+  };
+
+  const deleteStudy = async (id) => {
+    const upd = studies.filter(s => s.id !== id);
+    setStudies(upd);
+    try { localStorage.setItem("mri-hist", JSON.stringify(upd)); } catch {}
+    try {
+      const db = await openDB();
+      const tx = db.transaction("studies", "readwrite");
+      tx.objectStore("studies").delete(String(id));
+    } catch {}
+    flash("Дослідження видалено");
+    if (study?.id === id) setScr("dash");
+  };
+
+  const handleAttachment = async (files) => {
+    if (!study) return;
+    const attachments = [...(study.attachments || [])];
+    for (const file of Array.from(files)) {
+      const dataUrl = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result); r.readAsDataURL(file); });
+      attachments.push({ id: Date.now() + Math.random(), name: file.name, type: file.type, data: dataUrl, ts: Date.now() });
+    }
+    setStudy(p => ({ ...p, attachments }));
+    // Save updated study
+    try { await dbPut("studies", String(study.id), { ...study, attachments }); } catch {}
+    flash(`Додано ${files.length} файл(ів)`);
   };
 
   // Navigate to split view at specific slice
@@ -668,8 +710,34 @@ export default function MRIInsight() {
         <button onClick={() => setScr("radio")} style={P.act}><div style={{ ...P.aIc, background: "rgba(16,185,129,.14)", color: "#10b981" }}><ExternalLink size={24} /></div><span style={P.aLb}>Radiopaedia</span></button>
       </div>
       <div style={P.chips}>{Object.entries(ZONE_GROUPS).map(([gk, gv]) => <div key={gk} style={P.chipGroup}><span style={P.chipGLabel}>{gv.icon} {gv.label}</span><div style={P.chipRow}>{Object.entries(ZONES).filter(([_, z]) => z.group === gk).map(([k, v]) => <div key={k} style={P.chip}><span style={P.chN}>{v.short}</span><span style={P.chC}>{(refs[k] || []).length}</span></div>)}</div></div>)}</div>
-      {studies.length > 0 && <div><h3 style={P.secT}>Останні дослідження</h3>
-        {studies.map(s => <div key={s.id} onClick={() => loadStudy(s.id)} style={{ ...P.sCard, cursor: "pointer" }}><div><p style={P.sN}>{s.pn || "Без імені"}</p><p style={P.sM}>{ZONES[s.z]?.ua} · {s.ic} зрізів · {s.d}</p></div><div style={{ display: "flex", alignItems: "center", gap: 6 }}>{s.fc > 0 ? <span style={{ fontSize: 11, fontWeight: 600, background: "rgba(239,68,68,.12)", color: "#ef4444", padding: "2px 8px", borderRadius: 6 }}>{s.fc} знахідок</span> : <span style={{ fontSize: 11, fontWeight: 600, background: "rgba(16,185,129,.12)", color: "#10b981", padding: "2px 8px", borderRadius: 6 }}>Норма</span>}<ChevronRight size={14} style={{ color: "#475569" }} /></div></div>)}
+      {studies.length > 0 && <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <button onClick={() => setShowArchive(false)} style={{ ...P.sm, padding: "6px 14px", fontSize: 12, background: !showArchive ? "rgba(6,182,212,.14)" : "rgba(255,255,255,.04)", color: !showArchive ? "#06b6d4" : "#64748b", border: !showArchive ? "1px solid rgba(6,182,212,.3)" : "1px solid rgba(255,255,255,.07)" }}>Активні ({studies.filter(s => !s.archived).length})</button>
+          <button onClick={() => setShowArchive(true)} style={{ ...P.sm, padding: "6px 14px", fontSize: 12, background: showArchive ? "rgba(139,92,246,.14)" : "rgba(255,255,255,.04)", color: showArchive ? "#a78bfa" : "#64748b", border: showArchive ? "1px solid rgba(139,92,246,.3)" : "1px solid rgba(255,255,255,.07)" }}>Архів ({studies.filter(s => s.archived).length})</button>
+        </div>
+        {studies.filter(s => showArchive ? s.archived : !s.archived).map(s => (
+          <div key={s.id} style={{ ...P.sCard, cursor: "pointer" }}>
+            <div onClick={() => loadStudy(s.id)} style={{ flex: 1 }}>
+              <p style={P.sN}>{s.pn || "Без імені"}</p>
+              <p style={P.sM}>{ZONES[s.z]?.ua} · {s.ic} зрізів · {s.d}</p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              {s.fc > 0 ? <span style={{ fontSize: 11, fontWeight: 600, background: "rgba(239,68,68,.12)", color: "#ef4444", padding: "2px 8px", borderRadius: 6 }}>{s.fc} знахідок</span> : <span style={{ fontSize: 11, fontWeight: 600, background: "rgba(16,185,129,.12)", color: "#10b981", padding: "2px 8px", borderRadius: 6 }}>Норма</span>}
+              {showArchive ? (
+                <>
+                  <button onClick={(e) => { e.stopPropagation(); unarchiveStudy(s.id); }} title="Відновити" style={{ ...P.sm, color: "#a78bfa", padding: 4 }}><RotateCcw size={13} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); if (confirm("Видалити назавжди?")) deleteStudy(s.id); }} title="Видалити" style={{ ...P.sm, color: "#ef4444", padding: 4 }}><Trash2 size={13} /></button>
+                </>
+              ) : (
+                <button onClick={(e) => { e.stopPropagation(); archiveStudy(s.id); }} title="В архів" style={{ ...P.sm, color: "#64748b", padding: 4 }}><Archive size={13} /></button>
+              )}
+              <ChevronRight size={14} style={{ color: "#475569" }} />
+            </div>
+          </div>
+        ))}
+        {studies.filter(s => showArchive ? s.archived : !s.archived).length === 0 && (
+          <p style={{ fontSize: 13, color: "#475569", textAlign: "center", padding: "16px 0" }}>{showArchive ? "Архів порожній" : "Немає активних досліджень"}</p>
+        )}
       </div>}
     </div>
   );
@@ -919,6 +987,47 @@ export default function MRIInsight() {
         {study?.radio?.length > 0 && <div style={{ marginTop: 10 }}><h3 style={P.secT}>Radiopaedia · Довідник</h3>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>{study.radio.map((t, i) => <a key={i} href={radioUrl(t)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#06b6d4", background: "rgba(6,182,212,.1)", border: "1px solid rgba(6,182,212,.2)", borderRadius: 7, padding: "4px 9px", display: "flex", alignItems: "center", gap: 3, textDecoration: "none" }}>{t} <ExternalLink size={10} /></a>)}</div>
         </div>}
+
+        {/* ATTACHMENTS — MRI conclusion from imaging center */}
+        <div style={{ marginTop: 16 }}>
+          <h3 style={P.secT}><Paperclip size={14} style={{ marginRight: 4 }} />Заключення МРТ від центру</h3>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            <button onClick={() => attachIn.current?.click()} style={{ ...P.sm, padding: "8px 14px", fontSize: 12, background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.2)", color: "#f59e0b" }}>
+              <Upload size={14} style={{ marginRight: 4 }} /> Додати файл (фото/PDF)
+            </button>
+            <input ref={attachIn} type="file" multiple accept="image/*,application/pdf" style={{ display: "none" }} onChange={e => handleAttachment(e.target.files)} />
+          </div>
+          {(study?.attachments || []).length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(120px,1fr))", gap: 8 }}>
+              {study.attachments.map((att) => (
+                <div key={att.id} style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 8, overflow: "hidden", position: "relative" }}>
+                  {att.type.startsWith("image/") ? (
+                    <img src={att.data} alt={att.name} style={{ width: "100%", display: "block", cursor: "pointer", borderRadius: "8px 8px 0 0" }} onClick={() => setViewImg(att)} />
+                  ) : (
+                    <div onClick={() => { const w = window.open(); w.document.write(`<iframe src="${att.data}" style="width:100%;height:100vh;border:none"></iframe>`); }} style={{ height: 100, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: "rgba(245,158,11,.06)" }}>
+                      <FileText size={28} style={{ color: "#f59e0b" }} />
+                    </div>
+                  )}
+                  <div style={{ padding: "4px 6px" }}>
+                    <p style={{ fontSize: 10, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{att.name}</p>
+                  </div>
+                  <button onClick={async () => {
+                    const upd = (study.attachments || []).filter(a => a.id !== att.id);
+                    setStudy(p => ({ ...p, attachments: upd }));
+                    try { await dbPut("studies", String(study.id), { ...study, attachments: upd }); } catch {}
+                  }} style={{ position: "absolute", top: 3, right: 3, background: "rgba(0,0,0,.7)", border: "none", borderRadius: 4, padding: 2, color: "#ef4444", cursor: "pointer" }}><X size={10} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ARCHIVE BUTTON */}
+        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          <button onClick={() => archiveStudy(study.id)} style={{ ...P.sm, padding: "10px 16px", fontSize: 12, flex: 1, justifyContent: "center", background: "rgba(139,92,246,.08)", border: "1px solid rgba(139,92,246,.18)", color: "#a78bfa" }}>
+            <Archive size={14} style={{ marginRight: 4 }} /> В архів
+          </button>
+        </div>
 
         <div style={P.disc}><Shield size={14} style={{ color: "#475569", flexShrink: 0 }} /><p style={{ fontSize: 11, color: "#475569", lineHeight: 1.5 }}>Результати ІІ мають допоміжний характер. Остаточний діагноз ставить лікар.</p></div>
       </div>
