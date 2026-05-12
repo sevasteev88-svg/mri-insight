@@ -8,7 +8,7 @@ import {
 
 // ═══════════ IndexedDB HELPERS ═══════════
 const DB_NAME = "mri-insight-db";
-const DB_VER = 2;
+const DB_VER = 3;
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -17,6 +17,7 @@ function openDB() {
       const db = e.target.result;
       if (!db.objectStoreNames.contains("refs")) db.createObjectStore("refs");
       if (!db.objectStoreNames.contains("studies")) db.createObjectStore("studies");
+      if (!db.objectStoreNames.contains("corrections")) db.createObjectStore("corrections");
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -282,6 +283,8 @@ export default function MRIInsight() {
   const [toast, setToast] = useState(null);
   const [rf, setRf] = useState(""); const [rt, setRt] = useState("");
   const [showArchive, setShowArchive] = useState(false);
+  const [conclusionReview, setConclusionReview] = useState(null); // AI review of center's conclusion
+  const [reviewLoading, setReviewLoading] = useState(false);
 
   const refIn = useRef(null), pdfIn = useRef(null), patIn = useRef(null), recRef = useRef(null), attachIn = useRef(null);
 
@@ -421,6 +424,7 @@ export default function MRIInsight() {
       const saved = await dbGet("studies", String(id));
       if (saved) {
         setStudy(saved);
+        setConclusionReview(saved.conclusionReview || null);
         setScr("results");
       } else {
         flash("Дані дослідження не знайдено");
@@ -469,6 +473,111 @@ export default function MRIInsight() {
     flash(`Додано ${files.length} файл(ів)`);
   };
 
+  // AI review of center's conclusion
+  const reviewConclusion = async () => {
+    if (!apiKey || !study) return;
+    const attachments = study.attachments || [];
+    if (attachments.length === 0) { flash("Спочатку додайте заключення від центру"); return; }
+
+    setReviewLoading(true);
+    try {
+      const parts = [];
+      parts.push({ text: `Ти досвідчений радіолог. Тобі надано:
+1. Заключення МРТ від діагностичного центру (фото або PDF)
+2. Результати твого попереднього аналізу знімків цього пацієнта
+
+Порівняй заключення центру зі своїми знахідками. Відповідай ТІЛЬКИ валідним JSON українською:
+{
+  "overall_agreement": "agree|partial|disagree",
+  "overall_comment": "Загальна оцінка",
+  "details": [
+    {"point": "Що саме порівнюєш", "center_says": "Що написав центр", "ai_says": "Що вважаєш ти", "agreement": "agree|disagree", "comment": "Коментар"}
+  ],
+  "missed_by_center": ["Що центр міг пропустити"],
+  "missed_by_ai": ["Що ІІ міг пропустити"],
+  "recommendation": "Загальна рекомендація"
+}` });
+
+      parts.push({ text: `\n--- РЕЗУЛЬТАТИ ІІ АНАЛІЗУ ---\nЗона: ${ZONES[study.zone]?.ua}\nЗнахідки: ${JSON.stringify(study.findings || [])}\nВисновок ІІ: ${study.summary || "немає"}\n` });
+
+      parts.push({ text: "\n--- ЗАКЛЮЧЕННЯ ВІД ЦЕНТРУ ---" });
+      for (const att of attachments) {
+        if (att.type.startsWith("image/")) {
+          parts.push({ inline_data: { mime_type: "image/jpeg", data: att.data.split(",")[1] } });
+        } else if (att.type === "application/pdf") {
+          parts.push({ inline_data: { mime_type: "application/pdf", data: att.data.split(",")[1] } });
+        }
+      }
+
+      parts.push({ text: "\nПорівняй заключення центру зі своїми знахідками. Будь детальним." });
+
+      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.15, maxOutputTokens: 8192 } })
+      });
+
+      const data = await resp.json();
+      if (data?.error) throw new Error(data.error.message);
+
+      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const clean = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      try {
+        setConclusionReview(JSON.parse(clean));
+      } catch {
+        setConclusionReview({ overall_agreement: "partial", overall_comment: clean, details: [], missed_by_center: [], missed_by_ai: [], recommendation: "" });
+      }
+
+      // Save review to study
+      try { await dbPut("studies", String(study.id), { ...study, conclusionReview: JSON.parse(clean) }); } catch {}
+    } catch (err) {
+      flash(`Помилка: ${err.message}`);
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  // Confirm center's conclusion is correct and save as training data
+  const confirmConclusion = async () => {
+    if (!study) return;
+    const trainingCase = {
+      id: Date.now(),
+      zone: study.zone,
+      date: study.date,
+      patientName: study.patientName,
+      // Save only first 3 slices from each series as reference (to save space)
+      sampleSlices: Object.entries(study.series || {}).slice(0, 2).flatMap(([k, imgs]) =>
+        imgs.slice(0, 2).map(im => ({ seriesKey: k, data: im.data }))
+      ),
+      findings: study.findings || [],
+      summary: study.summary || "",
+      attachmentNames: (study.attachments || []).map(a => a.name),
+      conclusionReview: conclusionReview,
+      confirmedAt: Date.now(),
+    };
+
+    try {
+      await dbPut("corrections", String(trainingCase.id), trainingCase);
+      flash("✓ Випадок збережено для навчання ІІ");
+
+      // Mark study as confirmed
+      setStudy(p => ({ ...p, confirmed: true }));
+      await dbPut("studies", String(study.id), { ...study, confirmed: true });
+    } catch (err) {
+      flash(`Помилка збереження: ${err.message}`);
+    }
+  };
+
+  // Get past corrections for a zone (for few-shot learning)
+  const getPastCorrections = async (zone) => {
+    try {
+      const all = await dbGetAll("corrections");
+      return Object.values(all)
+        .filter(c => c.zone === zone)
+        .sort((a, b) => b.confirmedAt - a.confirmedAt)
+        .slice(0, 5);
+    } catch { return []; }
+  };
+
   // Navigate to split view at specific slice
   const goToSlice = (sliceStr) => {
     // Parse "T2_Sag: 3-5" or "T2: 3-5" or "3-5" or "12"
@@ -514,6 +623,16 @@ export default function MRIInsight() {
     try {
       const parts = [{ text: SYS_PROMPT }];
       parts.push({ text: `\nЗона: ${ZONES[study.zone].ua}\nСерії: ${usedSeqs.join(", ")}\nЗагальна кількість зрізів: ${all.length}\n` });
+
+      // Few-shot learning: include past confirmed corrections
+      const pastCases = await getPastCorrections(study.zone);
+      if (pastCases.length > 0) {
+        parts.push({ text: `\n--- ПОПЕРЕДНІ ПІДТВЕРДЖЕНІ ВИПАДКИ (для контексту) ---\nЛікар підтвердив ${pastCases.length} попередніх випадків для цієї зони. Ось їх знахідки як приклади правильної інтерпретації:\n` });
+        pastCases.forEach((c, i) => {
+          parts.push({ text: `\nВипадок ${i + 1} (${c.date}):\nЗнахідки: ${JSON.stringify(c.findings.map(f => ({ structure: f.structure, description: f.description, severity: f.severity })))}\nВисновок: ${c.summary}\n` });
+        });
+        parts.push({ text: "\nВраховуй ці приклади при аналізі нового пацієнта. Звертай увагу на те, які знахідки лікар підтвердив як правильні.\n" });
+      }
 
       const ne = Object.entries(vnotes).filter(([_, v]) => v.trim());
       if (ne.length) parts.push({ text: "\n--- НОТАТКИ ЛІКАРЯ ---\n" + ne.map(([k, v]) => `${k}: ${v.trim()}`).join("\n") });
@@ -995,10 +1114,16 @@ export default function MRIInsight() {
             <button onClick={() => attachIn.current?.click()} style={{ ...P.sm, padding: "8px 14px", fontSize: 12, background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.2)", color: "#f59e0b" }}>
               <Upload size={14} style={{ marginRight: 4 }} /> Додати файл (фото/PDF)
             </button>
+            {(study?.attachments || []).length > 0 && (
+              <button onClick={reviewConclusion} disabled={reviewLoading}
+                style={{ ...P.sm, padding: "8px 14px", fontSize: 12, background: "rgba(139,92,246,.1)", border: "1px solid rgba(139,92,246,.2)", color: "#a78bfa" }}>
+                {reviewLoading ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⏳</span> Аналіз...</> : <><Brain size={14} style={{ marginRight: 4 }} /> ІІ оцінка заключення</>}
+              </button>
+            )}
             <input ref={attachIn} type="file" multiple accept="image/*,application/pdf" style={{ display: "none" }} onChange={e => handleAttachment(e.target.files)} />
           </div>
           {(study?.attachments || []).length > 0 && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(120px,1fr))", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(120px,1fr))", gap: 8, marginBottom: 12 }}>
               {study.attachments.map((att) => (
                 <div key={att.id} style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 8, overflow: "hidden", position: "relative" }}>
                   {att.type.startsWith("image/") ? (
@@ -1021,6 +1146,75 @@ export default function MRIInsight() {
             </div>
           )}
         </div>
+
+        {/* AI CONCLUSION REVIEW */}
+        {(conclusionReview || study?.conclusionReview) && (() => {
+          const rev = conclusionReview || study?.conclusionReview;
+          const agreeColor = { agree: "#22c55e", partial: "#eab308", disagree: "#ef4444" };
+          const agreeLabel = { agree: "Згоден", partial: "Частково згоден", disagree: "Не згоден" };
+          const agreeEmoji = { agree: "✅", partial: "⚠️", disagree: "❌" };
+          return (
+            <div style={{ background: "rgba(139,92,246,.06)", border: "1px solid rgba(139,92,246,.18)", borderRadius: 12, padding: 16, marginBottom: 14 }}>
+              <h4 style={{ fontSize: 14, fontWeight: 700, color: "#a78bfa", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                <Brain size={16} /> Оцінка ІІ заключення центру
+              </h4>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, padding: "10px 14px", background: `${agreeColor[rev.overall_agreement] || agreeColor.partial}15`, borderRadius: 8, border: `1px solid ${agreeColor[rev.overall_agreement] || agreeColor.partial}30` }}>
+                <span style={{ fontSize: 24 }}>{agreeEmoji[rev.overall_agreement] || "⚠️"}</span>
+                <div>
+                  <p style={{ fontSize: 14, fontWeight: 700, color: agreeColor[rev.overall_agreement] || "#eab308" }}>{agreeLabel[rev.overall_agreement] || "Частково"}</p>
+                  <p style={{ fontSize: 12, color: "#cbd5e1", marginTop: 2 }}>{rev.overall_comment}</p>
+                </div>
+              </div>
+
+              {rev.details?.length > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8", marginBottom: 6, textTransform: "uppercase" }}>Детальне порівняння</p>
+                  {rev.details.map((d, i) => (
+                    <div key={i} style={{ background: "rgba(255,255,255,.03)", borderRadius: 8, padding: 10, marginBottom: 6, borderLeft: `3px solid ${agreeColor[d.agreement] || "#eab308"}` }}>
+                      <p style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", marginBottom: 4 }}>{d.point}</p>
+                      <p style={{ fontSize: 11, color: "#94a3b8" }}><span style={{ color: "#f59e0b" }}>Центр:</span> {d.center_says}</p>
+                      <p style={{ fontSize: 11, color: "#94a3b8" }}><span style={{ color: "#06b6d4" }}>ІІ:</span> {d.ai_says}</p>
+                      {d.comment && <p style={{ fontSize: 11, color: "#cbd5e1", marginTop: 2, fontStyle: "italic" }}>{d.comment}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {rev.missed_by_center?.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: "#f59e0b", marginBottom: 4 }}>Можливо пропущено центром:</p>
+                  {rev.missed_by_center.map((m, i) => <p key={i} style={{ fontSize: 12, color: "#fbbf24", marginLeft: 8 }}>• {m}</p>)}
+                </div>
+              )}
+
+              {rev.missed_by_ai?.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: "#06b6d4", marginBottom: 4 }}>ІІ міг пропустити:</p>
+                  {rev.missed_by_ai.map((m, i) => <p key={i} style={{ fontSize: 12, color: "#67e8f9", marginLeft: 8 }}>• {m}</p>)}
+                </div>
+              )}
+
+              {rev.recommendation && (
+                <div style={{ background: "rgba(6,182,212,.08)", borderRadius: 8, padding: 10, marginTop: 8 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: "#06b6d4", marginBottom: 2 }}>Рекомендація:</p>
+                  <p style={{ fontSize: 12, color: "#cbd5e1" }}>{rev.recommendation}</p>
+                </div>
+              )}
+
+              {!study?.confirmed && (
+                <button onClick={confirmConclusion} style={{ ...P.pri, marginTop: 12, background: "#22c55e" }}>
+                  <CheckCircle size={16} style={{ marginRight: 6 }} /> Підтвердити заключення — зберегти для навчання ІІ
+                </button>
+              )}
+              {study?.confirmed && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10, padding: "8px 12px", background: "rgba(34,197,94,.1)", borderRadius: 8 }}>
+                  <CheckCircle size={16} style={{ color: "#22c55e" }} />
+                  <p style={{ fontSize: 12, color: "#22c55e", fontWeight: 600 }}>Заключення підтверджено · Випадок збережено для навчання</p>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ARCHIVE BUTTON */}
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
