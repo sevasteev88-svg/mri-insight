@@ -18,7 +18,6 @@ function openDB() {
       if (!db.objectStoreNames.contains("refs")) db.createObjectStore("refs");
       if (!db.objectStoreNames.contains("studies")) db.createObjectStore("studies");
       if (!db.objectStoreNames.contains("corrections")) db.createObjectStore("corrections");
-      if (!db.objectStoreNames.contains("atlas")) db.createObjectStore("atlas");
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -266,7 +265,6 @@ export default function MRIInsight() {
   const [apiKey, setApiKey] = useState("");
   const [apiKeyIn, setApiKeyIn] = useState("");
   const [refs, setRefs] = useState({});
-  const [atlas, setAtlas] = useState({}); // Labeled anatomy images per zone
   const [atlas, setAtlas] = useState({}); // {zone: [{id, name, data, label}]}
   const [libTab, setLibTab] = useState("refs"); // "refs" | "atlas"
   const [selZone, setSelZone] = useState("knee");
@@ -287,7 +285,6 @@ export default function MRIInsight() {
   const [toast, setToast] = useState(null);
   const [rf, setRf] = useState(""); const [rt, setRt] = useState("");
   const [showArchive, setShowArchive] = useState(false);
-  const [libTab, setLibTab] = useState("refs"); // "refs" or "atlas"
   const [conclusionReview, setConclusionReview] = useState(null); // AI review of center's conclusion
   const [reviewLoading, setReviewLoading] = useState(false);
   const [roi, setRoi] = useState(null); // {x,y,w,h} normalized 0-1
@@ -352,11 +349,6 @@ export default function MRIInsight() {
         if (Object.keys(r).length > 0) setRefs(r);
         if (Object.keys(a).length > 0) setAtlas(a);
       } catch {}
-      // Load atlas from IndexedDB
-      try {
-        const allAtlas = await dbGetAll("atlas");
-        if (Object.keys(allAtlas).length > 0) setAtlas(allAtlas);
-      } catch {}
     })();
   }, []);
 
@@ -376,24 +368,6 @@ export default function MRIInsight() {
     };
     saveRefs();
   }, [refs, atlas]);
-
-  // Save atlas to IndexedDB
-  const atlasInitialized = useRef(false);
-  useEffect(() => {
-    if (!atlasInitialized.current) { atlasInitialized.current = true; return; }
-    const saveAtlas = async () => {
-      try {
-        const db = await openDB();
-        const tx = db.transaction("atlas", "readwrite");
-        const store = tx.objectStore("atlas");
-        store.clear();
-        Object.entries(atlas).forEach(([zone, imgs]) => {
-          if (imgs.length > 0) store.put(imgs, zone);
-        });
-      } catch (e) { console.error("Failed to save atlas:", e); }
-    };
-    saveAtlas();
-  }, [atlas]);
 
   const flash = m => { setToast(m); setTimeout(() => setToast(null), 2500); };
 
