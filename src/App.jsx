@@ -3,7 +3,7 @@ import {
   Settings, Upload, Plus, ArrowLeft, X, Zap, Shield, Brain, BookOpen,
   Eye, ChevronRight, AlertCircle, CheckCircle, Mic, MicOff, Search,
   EyeOff, Columns, FileText, Check, ExternalLink, ChevronLeft,
-  Volume2, Square, Info, Archive, Trash2, RotateCcw, Paperclip
+  Volume2, Square, Info, Archive, Trash2, RotateCcw, Paperclip, Crosshair
 } from "lucide-react";
 
 // ═══════════ IndexedDB HELPERS ═══════════
@@ -285,8 +285,14 @@ export default function MRIInsight() {
   const [showArchive, setShowArchive] = useState(false);
   const [conclusionReview, setConclusionReview] = useState(null); // AI review of center's conclusion
   const [reviewLoading, setReviewLoading] = useState(false);
+  const [roi, setRoi] = useState(null); // {x,y,w,h} normalized 0-1
+  const [roiDrawing, setRoiDrawing] = useState(false);
+  const [roiStart, setRoiStart] = useState(null);
+  const [roiResult, setRoiResult] = useState(null);
+  const [roiLoading, setRoiLoading] = useState(false);
 
   const refIn = useRef(null), pdfIn = useRef(null), patIn = useRef(null), recRef = useRef(null), attachIn = useRef(null);
+  const roiImgRef = useRef(null);
 
   // Clipboard paste handler for library
   useEffect(() => {
@@ -576,6 +582,98 @@ export default function MRIInsight() {
         .sort((a, b) => b.confirmedAt - a.confirmedAt)
         .slice(0, 5);
     } catch { return []; }
+  };
+
+  // ═══════════ ROI MARKER ═══════════
+  const roiMouseDown = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    setRoiStart({ x, y });
+    setRoiDrawing(true);
+    setRoi(null);
+    setRoiResult(null);
+  };
+
+  const roiMouseMove = (e) => {
+    if (!roiDrawing || !roiStart) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    setRoi({
+      x: Math.min(roiStart.x, x), y: Math.min(roiStart.y, y),
+      w: Math.abs(x - roiStart.x), h: Math.abs(y - roiStart.y),
+    });
+  };
+
+  const roiMouseUp = () => { setRoiDrawing(false); };
+
+  const cropRoi = (imgData, roiRect) => {
+    return new Promise((resolve) => {
+      const img = new window.Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        const sx = roiRect.x * img.width, sy = roiRect.y * img.height;
+        const sw = roiRect.w * img.width, sh = roiRect.h * img.height;
+        if (sw < 10 || sh < 10) { resolve(null); return; }
+        c.width = sw; c.height = sh;
+        c.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+        resolve(c.toDataURL("image/jpeg", 0.9));
+      };
+      img.src = imgData;
+    });
+  };
+
+  const analyzeRoi = async () => {
+    if (!apiKey || !roi || !study) return;
+    const im = curImgs();
+    if (!im[splitIdx]) return;
+
+    setRoiLoading(true);
+    try {
+      const cropped = await cropRoi(im[splitIdx].data, roi);
+      if (!cropped) { flash("Занадто мала ділянка"); setRoiLoading(false); return; }
+
+      const parts = [];
+      parts.push({ text: `Ти радіолог-експерт. Лікар виділив конкретну ділянку на МРТ знімку для детального аналізу.
+Зона: ${ZONES[study.zone]?.ua}
+Серія: ${seriesKey()}
+Зріз: ${splitIdx + 1}
+
+Проаналізуй ВИДІЛЕНУ ДІЛЯНКУ максимально детально. Відповідай ТІЛЬКИ JSON українською:
+{
+  "structure": "Яка анатомічна структура виділена",
+  "findings": "Детальний опис того що бачиш",
+  "pathology": "Є патологія чи норма",
+  "confidence_level": 85,
+  "severity": "normal|mild|moderate|severe",
+  "recommendation": "Рекомендація"
+}` });
+
+      // Send full slice for context
+      parts.push({ text: "\n--- ПОВНИЙ ЗРІЗ (для контексту) ---" });
+      parts.push({ inline_data: { mime_type: "image/jpeg", data: im[splitIdx].data.split(",")[1] } });
+
+      // Send cropped ROI
+      parts.push({ text: "\n--- ВИДІЛЕНА ДІЛЯНКА (пріоритет аналізу) ---" });
+      parts.push({ inline_data: { mime_type: "image/jpeg", data: cropped.split(",")[1] } });
+
+      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.15, maxOutputTokens: 4096 } })
+      });
+
+      const data = await resp.json();
+      if (data?.error) throw new Error(data.error.message);
+
+      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const clean = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      try { setRoiResult(JSON.parse(clean)); } catch { setRoiResult({ structure: "Аналіз", findings: clean, pathology: "—", confidence_level: 50, severity: "mild", recommendation: "" }); }
+    } catch (err) {
+      flash(`Помилка: ${err.message}`);
+    } finally {
+      setRoiLoading(false);
+    }
   };
 
   // Navigate to split view at specific slice
@@ -1003,31 +1101,53 @@ export default function MRIInsight() {
     const zr = refs[study?.zone] || [];
     const im = curImgs();
     const noteKey = `${seriesKey()}-${splitIdx}`;
+    const cc = roiResult ? confColor(roiResult.confidence_level || 50) : null;
     return (
       <div style={{ padding: "8px 12px 12px", color: "#e2e8f0", fontFamily: "'IBM Plex Sans',sans-serif" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <button onClick={() => setScr(prevScr)} style={P.bk}><ArrowLeft size={16} /> Назад</button>
+          <button onClick={() => { setScr(prevScr); setRoi(null); setRoiResult(null); }} style={P.bk}><ArrowLeft size={16} /> Назад</button>
           <span style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9" }}>Порівняння</span>
           <div style={{ display: "flex", gap: 3, marginLeft: "auto", flexWrap: "wrap" }}>
             {Object.entries(seriesCounts()).map(([k, cnt]) => (
-              <button key={k} onClick={() => { const [seq, pl] = k.split("_"); setStudy(p => ({ ...p, activeSeq: seq, activePlane: pl })); setSplitIdx(0); }}
+              <button key={k} onClick={() => { const [seq, pl] = k.split("_"); setStudy(p => ({ ...p, activeSeq: seq, activePlane: pl })); setSplitIdx(0); setRoi(null); setRoiResult(null); }}
                 style={{ ...k === seriesKey() ? P.sqOn : P.sq, padding: "4px 8px", fontSize: 9 }}>{k.replace("_", " ")} ({cnt})</button>
             ))}
           </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, height: "calc(100vh - 80px)" }}>
-          {/* PATIENT */}
+        <div style={{ display: "grid", gridTemplateColumns: roiResult ? "1fr 1fr 300px" : "1fr 1fr", gap: 6, height: "calc(100vh - 80px)" }}>
+          {/* PATIENT with ROI */}
           <div style={{ background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column" }}>
-            <p style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textAlign: "center", marginBottom: 3, textTransform: "uppercase" }}>Пацієнт · {study?.activeSeq} {study?.activePlane} · {im.length > 0 ? `${splitIdx + 1}/${im.length}` : "—"}</p>
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-              {im[splitIdx] ? <img src={im[splitIdx].data} alt="" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 6, cursor: "pointer" }} onClick={() => setViewImg(im[splitIdx])} /> : <span style={{ color: "#334155" }}>—</span>}
+            <p style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textAlign: "center", marginBottom: 3, textTransform: "uppercase", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+              <Crosshair size={10} /> Пацієнт · {study?.activeSeq} {study?.activePlane} · {im.length > 0 ? `${splitIdx + 1}/${im.length}` : "—"}
+            </p>
+            <div ref={roiImgRef} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: "crosshair", userSelect: "none" }}
+              onMouseDown={roiMouseDown} onMouseMove={roiMouseMove} onMouseUp={roiMouseUp} onMouseLeave={() => { if (roiDrawing) setRoiDrawing(false); }}>
+              {im[splitIdx] ? <img src={im[splitIdx].data} alt="" draggable={false} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 6, pointerEvents: "none" }} /> : <span style={{ color: "#334155" }}>—</span>}
+              {/* ROI rectangle overlay */}
+              {roi && (
+                <div style={{
+                  position: "absolute",
+                  left: `${roi.x * 100}%`, top: `${roi.y * 100}%`,
+                  width: `${roi.w * 100}%`, height: `${roi.h * 100}%`,
+                  border: "2px solid #f59e0b", background: "rgba(245,158,11,.12)",
+                  borderRadius: 3, pointerEvents: "none",
+                  boxShadow: "0 0 0 9999px rgba(0,0,0,.3)",
+                }} />
+              )}
             </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "4px 0" }}>
-              <button disabled={splitIdx <= 0} onClick={() => setSplitIdx(splitIdx - 1)} style={P.nv}><ChevronLeft size={14} /></button>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "4px 0", flexWrap: "wrap" }}>
+              <button disabled={splitIdx <= 0} onClick={() => { setSplitIdx(splitIdx - 1); setRoi(null); setRoiResult(null); }} style={P.nv}><ChevronLeft size={14} /></button>
               <span style={{ fontSize: 10, color: "#64748b" }}>{im.length > 0 ? `${splitIdx + 1}/${im.length}` : "—"}</span>
-              <button disabled={splitIdx >= im.length - 1} onClick={() => setSplitIdx(splitIdx + 1)} style={P.nv}><ChevronRight size={14} /></button>
+              <button disabled={splitIdx >= im.length - 1} onClick={() => { setSplitIdx(splitIdx + 1); setRoi(null); setRoiResult(null); }} style={P.nv}><ChevronRight size={14} /></button>
               <button onClick={() => recording === noteKey ? stopVoice() : startVoice(noteKey)} style={{ ...P.sm, marginLeft: 4, background: recording === noteKey ? "rgba(239,68,68,.18)" : "rgba(255,255,255,.04)", color: recording === noteKey ? "#ef4444" : "#94a3b8" }}>{recording === noteKey ? <MicOff size={11} /> : <Mic size={11} />}</button>
+              {roi && roi.w > 0.02 && (
+                <button onClick={analyzeRoi} disabled={roiLoading} style={{ ...P.sm, padding: "4px 12px", background: "rgba(245,158,11,.14)", border: "1px solid rgba(245,158,11,.3)", color: "#f59e0b" }}>
+                  {roiLoading ? "⏳ Аналіз..." : <><Crosshair size={12} /> Аналіз ділянки</>}
+                </button>
+              )}
+              {roi && <button onClick={() => { setRoi(null); setRoiResult(null); }} style={{ ...P.sm, padding: "4px 8px", color: "#64748b" }}><X size={12} /></button>}
             </div>
+            {!roi && <p style={{ fontSize: 9, color: "#475569", textAlign: "center" }}>Виділіть мишкою ділянку для аналізу ІІ</p>}
           </div>
           {/* REFERENCE */}
           <div style={{ background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column" }}>
@@ -1041,6 +1161,36 @@ export default function MRIInsight() {
               <button disabled={refIdx >= zr.length - 1} onClick={() => setRefIdx(refIdx + 1)} style={P.nv}><ChevronRight size={14} /></button>
             </div>}
           </div>
+          {/* ROI RESULT PANEL */}
+          {roiResult && (
+            <div style={{ background: "rgba(245,158,11,.04)", border: "1px solid rgba(245,158,11,.15)", borderRadius: 8, padding: 12, overflowY: "auto" }}>
+              <h4 style={{ fontSize: 13, fontWeight: 700, color: "#f59e0b", marginBottom: 8, display: "flex", alignItems: "center", gap: 4 }}><Crosshair size={14} /> Аналіз ділянки</h4>
+              <div style={{ marginBottom: 8 }}>
+                <p style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Структура</p>
+                <p style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{roiResult.structure}</p>
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <p style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Опис</p>
+                <p style={{ fontSize: 12, lineHeight: 1.5, color: "#cbd5e1" }}>{roiResult.findings}</p>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <div>
+                  <p style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Патологія</p>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{roiResult.pathology}</p>
+                </div>
+                <div>
+                  <p style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Впевненість</p>
+                  <span style={{ fontSize: 12, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: cc?.bg, color: cc?.c }}>{roiResult.confidence_level}%</span>
+                </div>
+              </div>
+              {roiResult.recommendation && (
+                <div style={{ background: "rgba(6,182,212,.08)", borderRadius: 6, padding: 8, marginTop: 4 }}>
+                  <p style={{ fontSize: 10, color: "#06b6d4", fontWeight: 600, marginBottom: 2 }}>Рекомендація</p>
+                  <p style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.4 }}>{roiResult.recommendation}</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
