@@ -635,20 +635,30 @@ export default function MRIInsight() {
       if (!cropped) { flash("Занадто мала ділянка"); setRoiLoading(false); return; }
 
       const parts = [];
-      parts.push({ text: `Ти радіолог-експерт. Лікар виділив конкретну ділянку на МРТ знімку для детального аналізу.
+      parts.push({ text: `Ти радіолог-експерт та анатом. Лікар виділив конкретну ділянку на МРТ знімку для детального аналізу.
 Зона: ${ZONES[study.zone]?.ua}
 Серія: ${seriesKey()}
 Зріз: ${splitIdx + 1}
 
 Проаналізуй ВИДІЛЕНУ ДІЛЯНКУ максимально детально. Відповідай ТІЛЬКИ JSON українською:
 {
-  "structure": "Яка анатомічна структура виділена",
-  "findings": "Детальний опис того що бачиш",
-  "pathology": "Є патологія чи норма",
+  "structure": "Назва анатомічної структури",
+  "anatomy": {
+    "description": "Що це за структура — коротко, 1-2 речення",
+    "function": "Яку функцію виконує",
+    "origin": "Місце початку/проксимальне прикріплення (для м'язів та зв'язок)",
+    "insertion": "Місце прикріплення/дистальне прикріплення",
+    "innervation": "Іннервація (для м'язів)",
+    "clinical_note": "Клінічне значення — яка патологія найчастіше трапляється"
+  },
+  "findings": "Детальний опис того що бачиш на знімку",
+  "pathology": "Є патологія чи норма — конкретно",
   "confidence_level": 85,
   "severity": "normal|mild|moderate|severe",
   "recommendation": "Рекомендація"
-}` });
+}
+Для кісток або суглобових поверхонь замість origin/insertion вкажи суглобові поверхні та зв'язки.
+Для менісків, хрящів — відповідну анатомію.` });
 
       // Send full slice for context
       parts.push({ text: "\n--- ПОВНИЙ ЗРІЗ (для контексту) ---" });
@@ -1165,16 +1175,47 @@ export default function MRIInsight() {
           {roiResult && (
             <div style={{ background: "rgba(245,158,11,.04)", border: "1px solid rgba(245,158,11,.15)", borderRadius: 8, padding: 12, overflowY: "auto" }}>
               <h4 style={{ fontSize: 13, fontWeight: 700, color: "#f59e0b", marginBottom: 8, display: "flex", alignItems: "center", gap: 4 }}><Crosshair size={14} /> Аналіз ділянки</h4>
-              <div style={{ marginBottom: 8 }}>
+
+              {/* Structure name */}
+              <div style={{ marginBottom: 8, padding: "8px 10px", background: "rgba(255,255,255,.04)", borderRadius: 6 }}>
                 <p style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Структура</p>
-                <p style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{roiResult.structure}</p>
+                <p style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9" }}>{roiResult.structure}</p>
               </div>
+
+              {/* Anatomy reference */}
+              {roiResult.anatomy && (
+                <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(139,92,246,.06)", border: "1px solid rgba(139,92,246,.12)", borderRadius: 6 }}>
+                  <p style={{ fontSize: 10, fontWeight: 600, color: "#a78bfa", textTransform: "uppercase", marginBottom: 6 }}>📖 Анатомічна довідка</p>
+                  {roiResult.anatomy.description && <p style={{ fontSize: 11, color: "#cbd5e1", marginBottom: 4, lineHeight: 1.4 }}>{roiResult.anatomy.description}</p>}
+                  {roiResult.anatomy.function && (
+                    <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#a78bfa", fontWeight: 600 }}>Функція: </span><span style={{ fontSize: 11, color: "#94a3b8" }}>{roiResult.anatomy.function}</span></div>
+                  )}
+                  {roiResult.anatomy.origin && (
+                    <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#a78bfa", fontWeight: 600 }}>Початок: </span><span style={{ fontSize: 11, color: "#94a3b8" }}>{roiResult.anatomy.origin}</span></div>
+                  )}
+                  {roiResult.anatomy.insertion && (
+                    <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#a78bfa", fontWeight: 600 }}>Прикріплення: </span><span style={{ fontSize: 11, color: "#94a3b8" }}>{roiResult.anatomy.insertion}</span></div>
+                  )}
+                  {roiResult.anatomy.innervation && (
+                    <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#a78bfa", fontWeight: 600 }}>Іннервація: </span><span style={{ fontSize: 11, color: "#94a3b8" }}>{roiResult.anatomy.innervation}</span></div>
+                  )}
+                  {roiResult.anatomy.clinical_note && (
+                    <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(139,92,246,.1)" }}>
+                      <span style={{ fontSize: 10, color: "#f59e0b", fontWeight: 600 }}>⚕ Клінічне: </span><span style={{ fontSize: 11, color: "#fbbf24" }}>{roiResult.anatomy.clinical_note}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* MRI findings */}
               <div style={{ marginBottom: 8 }}>
-                <p style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Опис</p>
+                <p style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Що видно на знімку</p>
                 <p style={{ fontSize: 12, lineHeight: 1.5, color: "#cbd5e1" }}>{roiResult.findings}</p>
               </div>
+
+              {/* Pathology + confidence */}
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                <div>
+                <div style={{ flex: 1 }}>
                   <p style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Патологія</p>
                   <p style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{roiResult.pathology}</p>
                 </div>
@@ -1183,6 +1224,7 @@ export default function MRIInsight() {
                   <span style={{ fontSize: 12, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: cc?.bg, color: cc?.c }}>{roiResult.confidence_level}%</span>
                 </div>
               </div>
+
               {roiResult.recommendation && (
                 <div style={{ background: "rgba(6,182,212,.08)", borderRadius: 6, padding: 8, marginTop: 4 }}>
                   <p style={{ fontSize: 10, color: "#06b6d4", fontWeight: 600, marginBottom: 2 }}>Рекомендація</p>
