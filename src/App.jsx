@@ -266,7 +266,8 @@ export default function MRIInsight() {
   const [apiKeyIn, setApiKeyIn] = useState("");
   const [refs, setRefs] = useState({});
   const [atlas, setAtlas] = useState({}); // {zone: [{id, name, data, label}]}
-  const [libTab, setLibTab] = useState("refs"); // "refs" | "atlas"
+  const [kb, setKb] = useState({}); // {zone: [{id, title, text}]}
+  const [libTab, setLibTab] = useState("refs"); // "refs" | "atlas" | "kb"
   const [selZone, setSelZone] = useState("knee");
   const [studies, setStudies] = useState([]);
   const [study, setStudy] = useState(null);
@@ -338,25 +339,27 @@ export default function MRIInsight() {
     (async () => {
       try { const r = localStorage.getItem("mri-key"); if (r) { setApiKey(r); setApiKeyIn(r); } } catch {}
       try { const r = localStorage.getItem("mri-hist"); if (r) setStudies(JSON.parse(r)); } catch {}
-      // Load refs from IndexedDB
+      // Load refs, atlas, kb from IndexedDB
       try {
         const allRefs = await dbGetAll("refs");
-        const r = {}, a = {};
-        Object.entries(allRefs).forEach(([k, v]) => {
-          if (k.startsWith("atlas_")) a[k.replace("atlas_", "")] = v;
-          else r[k] = v;
+        const r = {}, a = {}, k = {};
+        Object.entries(allRefs).forEach(([key, v]) => {
+          if (key.startsWith("atlas_")) a[key.replace("atlas_", "")] = v;
+          else if (key.startsWith("kb_")) k[key.replace("kb_", "")] = v;
+          else r[key] = v;
         });
         if (Object.keys(r).length > 0) setRefs(r);
         if (Object.keys(a).length > 0) setAtlas(a);
+        if (Object.keys(k).length > 0) setKb(k);
       } catch {}
     })();
   }, []);
 
-  // Save refs + atlas to IndexedDB whenever they change
+  // Save refs + atlas + kb to IndexedDB whenever they change
   const refsInitialized = useRef(false);
   useEffect(() => {
     if (!refsInitialized.current) { refsInitialized.current = true; return; }
-    const saveRefs = async () => {
+    const saveAll = async () => {
       try {
         const db = await openDB();
         const tx = db.transaction("refs", "readwrite");
@@ -364,10 +367,11 @@ export default function MRIInsight() {
         store.clear();
         Object.entries(refs).forEach(([zone, imgs]) => { if (imgs.length > 0) store.put(imgs, zone); });
         Object.entries(atlas).forEach(([zone, imgs]) => { if (imgs.length > 0) store.put(imgs, `atlas_${zone}`); });
-      } catch (e) { console.error("Failed to save refs:", e); }
+        Object.entries(kb).forEach(([zone, entries]) => { if (entries.length > 0) store.put(entries, `kb_${zone}`); });
+      } catch (e) { console.error("Failed to save:", e); }
     };
-    saveRefs();
-  }, [refs, atlas]);
+    saveAll();
+  }, [refs, atlas, kb]);
 
   const flash = m => { setToast(m); setTimeout(() => setToast(null), 2500); };
 
@@ -694,6 +698,12 @@ export default function MRIInsight() {
         }
       }
 
+      // Knowledge base rules
+      const zoneKb = kb[study.zone] || [];
+      if (zoneKb.length > 0) {
+        parts.push({ text: "\n--- БАЗА ЗНАНЬ (діагностичні критерії) ---\n" + zoneKb.map(e => `[${e.title}]\n${e.text}`).join("\n\n") + "\n" });
+      }
+
       // Send full slice for context
       parts.push({ text: "\n--- ПОВНИЙ ЗРІЗ (для контексту) ---" });
       parts.push({ inline_data: { mime_type: "image/jpeg", data: im[splitIdx].data.split(",")[1] } });
@@ -783,6 +793,13 @@ export default function MRIInsight() {
         parts.push({ text: "\n--- РЕФЕРЕНСИ НОРМИ ---" });
         for (const r of zrefs.slice(0, 20)) parts.push({ inline_data: { mime_type: "image/jpeg", data: r.data.split(",")[1] } });
       }
+
+      // Knowledge base rules
+      const zoneKb = kb[study.zone] || [];
+      if (zoneKb.length > 0) {
+        parts.push({ text: "\n--- БАЗА ЗНАНЬ (діагностичні критерії для цієї зони) ---\n" + zoneKb.map(e => `[${e.title}]\n${e.text}`).join("\n\n") + "\n\nВраховуй ці діагностичні критерії при аналізі знімків.\n" });
+      }
+
       setProg({ s: "send", p: 30 });
 
       // Send each series with its sequence label
@@ -1018,10 +1035,13 @@ export default function MRIInsight() {
           <button onClick={() => setLibTab("atlas")} style={{ ...P.sm, padding: "8px 16px", fontSize: 12, background: libTab === "atlas" ? "rgba(139,92,246,.14)" : "rgba(255,255,255,.04)", color: libTab === "atlas" ? "#a78bfa" : "#64748b", border: libTab === "atlas" ? "1px solid rgba(139,92,246,.3)" : "1px solid rgba(255,255,255,.07)" }}>
             📖 Анатомічний атлас ({Object.values(atlas).reduce((s, a) => s + a.length, 0)})
           </button>
+          <button onClick={() => setLibTab("kb")} style={{ ...P.sm, padding: "8px 16px", fontSize: 12, background: libTab === "kb" ? "rgba(245,158,11,.14)" : "rgba(255,255,255,.04)", color: libTab === "kb" ? "#f59e0b" : "#64748b", border: libTab === "kb" ? "1px solid rgba(245,158,11,.3)" : "1px solid rgba(255,255,255,.07)" }}>
+            📝 База знань ({Object.values(kb).reduce((s, a) => s + a.length, 0)})
+          </button>
         </div>
 
         <div style={P.ztabs}>{Object.entries(ZONE_GROUPS).map(([gk, gv]) => <div key={gk} style={P.ztGroup}><span style={P.ztGLabel}>{gv.icon} {gv.label}</span><div style={P.ztRow}>{Object.entries(ZONES).filter(([_, z]) => z.group === gk).map(([k, v]) => {
-          const cnt = libTab === "refs" ? (refs[k] || []).length : (atlas[k] || []).length;
+          const cnt = libTab === "refs" ? (refs[k] || []).length : libTab === "atlas" ? (atlas[k] || []).length : (kb[k] || []).length;
           return <button key={k} onClick={() => setSelZone(k)} style={selZone === k ? P.ztOn : P.zt}>{v.short}{cnt > 0 && <span style={P.ztB}>{cnt}</span>}</button>;
         })}</div></div>)}</div>
 
@@ -1079,6 +1099,52 @@ export default function MRIInsight() {
                   </div>
                 ))}
               </div></>}
+        </>)}
+
+        {libTab === "kb" && (<>
+          {/* KNOWLEDGE BASE TAB */}
+          <div style={{ background: "rgba(245,158,11,.06)", border: "1px solid rgba(245,158,11,.12)", borderRadius: 10, padding: 12, marginBottom: 12 }}>
+            <p style={{ fontSize: 12, color: "#f59e0b", lineHeight: 1.5 }}>
+              📝 Додайте текстові правила інтерпретації МРТ для кожної зони. Наприклад: "На T2 ПКС має бути низького сигналу. Якщо сигнал підвищений та зв'язка потовщена — підозра на часткове пошкодження." ІІ використовуватиме ці правила при аналізі знімків.
+            </p>
+          </div>
+          <button onClick={() => {
+            const title = prompt("Назва правила:\nНаприклад: 'ПКС — ознаки пошкодження' або 'Меніск — критерії розриву'");
+            if (!title || !title.trim()) return;
+            const text = prompt(`Текст правила для "${title.trim()}":\nОпишіть як виглядає патологія на МРТ, які послідовності найкраще показують, на що звертати увагу.`);
+            if (!text || !text.trim()) return;
+            setKb(p => ({ ...p, [selZone]: [...(p[selZone] || []), { id: Date.now(), title: title.trim(), text: text.trim() }] }));
+            flash("Правило додано");
+          }} style={{ ...P.sm, padding: "10px 16px", fontSize: 12, background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.2)", color: "#f59e0b", marginBottom: 12, width: "100%", justifyContent: "center" }}>
+            <Plus size={14} style={{ marginRight: 4 }} /> Додати правило для "{ZONES[selZone].short}"
+          </button>
+          {(kb[selZone] || []).length === 0 ? (
+            <div style={{ textAlign: "center", padding: "36px 16px" }}>
+              <span style={{ fontSize: 32 }}>📝</span>
+              <p style={{ fontSize: 13, color: "#475569", marginTop: 10 }}>Немає правил для цієї зони</p>
+              <p style={{ fontSize: 11, color: "#334155", marginTop: 4 }}>Додайте діагностичні критерії з відео, книг або власного досвіду</p>
+            </div>
+          ) : (
+            <div>
+              <p style={{ fontSize: 12, color: "#f59e0b", marginBottom: 8 }}>{(kb[selZone] || []).length} правил — "{ZONES[selZone].ua}"</p>
+              {(kb[selZone] || []).map(entry => (
+                <div key={entry.id} style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 8, padding: 12, marginBottom: 8, position: "relative" }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 600, color: "#f59e0b", marginBottom: 6 }}>{entry.title}</h4>
+                  <p style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{entry.text}</p>
+                  <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
+                    <button onClick={() => {
+                      const newText = prompt("Редагувати текст правила:", entry.text);
+                      if (newText && newText.trim()) setKb(p => ({ ...p, [selZone]: (p[selZone] || []).map(e => e.id === entry.id ? { ...e, text: newText.trim() } : e) }));
+                    }} style={{ ...P.sm, fontSize: 11, color: "#06b6d4" }}>Редагувати</button>
+                    <button onClick={() => {
+                      setKb(p => ({ ...p, [selZone]: (p[selZone] || []).filter(e => e.id !== entry.id) }));
+                      flash("Правило видалено");
+                    }} style={{ ...P.sm, fontSize: 11, color: "#ef4444" }}><Trash2 size={11} /> Видалити</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </>)}
 
         {pdfM && <div style={P.ov} onClick={() => !pdfM.ld && setPdfM(null)}><div style={P.pdfPan} onClick={e => e.stopPropagation()}>
