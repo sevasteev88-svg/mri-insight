@@ -8,7 +8,7 @@ import {
 
 // ═══════════ IndexedDB HELPERS ═══════════
 const DB_NAME = "mri-insight-db";
-const DB_VER = 3;
+const DB_VER = 4;
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -18,6 +18,7 @@ function openDB() {
       if (!db.objectStoreNames.contains("refs")) db.createObjectStore("refs");
       if (!db.objectStoreNames.contains("studies")) db.createObjectStore("studies");
       if (!db.objectStoreNames.contains("corrections")) db.createObjectStore("corrections");
+      if (!db.objectStoreNames.contains("atlas")) db.createObjectStore("atlas");
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -265,6 +266,9 @@ export default function MRIInsight() {
   const [apiKey, setApiKey] = useState("");
   const [apiKeyIn, setApiKeyIn] = useState("");
   const [refs, setRefs] = useState({});
+  const [atlas, setAtlas] = useState({}); // Labeled anatomy images per zone
+  const [atlas, setAtlas] = useState({}); // {zone: [{id, name, data, label}]}
+  const [libTab, setLibTab] = useState("refs"); // "refs" | "atlas"
   const [selZone, setSelZone] = useState("knee");
   const [studies, setStudies] = useState([]);
   const [study, setStudy] = useState(null);
@@ -283,6 +287,7 @@ export default function MRIInsight() {
   const [toast, setToast] = useState(null);
   const [rf, setRf] = useState(""); const [rt, setRt] = useState("");
   const [showArchive, setShowArchive] = useState(false);
+  const [libTab, setLibTab] = useState("refs"); // "refs" or "atlas"
   const [conclusionReview, setConclusionReview] = useState(null); // AI review of center's conclusion
   const [reviewLoading, setReviewLoading] = useState(false);
   const [roi, setRoi] = useState(null); // {x,y,w,h} normalized 0-1
@@ -291,7 +296,7 @@ export default function MRIInsight() {
   const [roiResult, setRoiResult] = useState(null);
   const [roiLoading, setRoiLoading] = useState(false);
 
-  const refIn = useRef(null), pdfIn = useRef(null), patIn = useRef(null), recRef = useRef(null), attachIn = useRef(null);
+  const refIn = useRef(null), pdfIn = useRef(null), patIn = useRef(null), recRef = useRef(null), attachIn = useRef(null), atlasIn = useRef(null);
   const roiImgRef = useRef(null);
 
   // Clipboard paste handler for library
@@ -306,9 +311,17 @@ export default function MRIInsight() {
           const blob = item.getAsFile();
           const reader = new FileReader();
           reader.onload = (ev) => {
-            const obj = { id: Date.now() + Math.random(), name: "Вставлено з буфера", data: ev.target.result, ts: Date.now(), src: "clipboard" };
-            setRefs(p => ({ ...p, [selZone]: [...(p[selZone] || []), obj] }));
-            flash("Зображення вставлено з буфера обміну");
+            if (libTab === "atlas") {
+              const label = prompt("Опис зображення:\nНаприклад: 'ПКС на сагітальному зрізі' або 'Медіальний меніск'");
+              if (label && label.trim()) {
+                setAtlas(p => ({ ...p, [selZone]: [...(p[selZone] || []), { id: Date.now() + Math.random(), name: "Вставлено з буфера", data: ev.target.result, label: label.trim(), ts: Date.now() }] }));
+                flash("Зображення додано до атласу");
+              }
+            } else {
+              const obj = { id: Date.now() + Math.random(), name: "Вставлено з буфера", data: ev.target.result, ts: Date.now(), src: "clipboard" };
+              setRefs(p => ({ ...p, [selZone]: [...(p[selZone] || []), obj] }));
+              flash("Зображення вставлено з буфера обміну");
+            }
           };
           reader.readAsDataURL(blob);
         }
@@ -316,7 +329,7 @@ export default function MRIInsight() {
     };
     document.addEventListener("paste", handler);
     return () => document.removeEventListener("paste", handler);
-  }, [scr, selZone]);
+  }, [scr, selZone, libTab]);
 
   useEffect(() => {
     if (!window.pdfjsLib) {
@@ -331,12 +344,23 @@ export default function MRIInsight() {
       // Load refs from IndexedDB
       try {
         const allRefs = await dbGetAll("refs");
-        if (Object.keys(allRefs).length > 0) setRefs(allRefs);
+        const r = {}, a = {};
+        Object.entries(allRefs).forEach(([k, v]) => {
+          if (k.startsWith("atlas_")) a[k.replace("atlas_", "")] = v;
+          else r[k] = v;
+        });
+        if (Object.keys(r).length > 0) setRefs(r);
+        if (Object.keys(a).length > 0) setAtlas(a);
+      } catch {}
+      // Load atlas from IndexedDB
+      try {
+        const allAtlas = await dbGetAll("atlas");
+        if (Object.keys(allAtlas).length > 0) setAtlas(allAtlas);
       } catch {}
     })();
   }, []);
 
-  // Save refs to IndexedDB whenever they change
+  // Save refs + atlas to IndexedDB whenever they change
   const refsInitialized = useRef(false);
   useEffect(() => {
     if (!refsInitialized.current) { refsInitialized.current = true; return; }
@@ -346,13 +370,30 @@ export default function MRIInsight() {
         const tx = db.transaction("refs", "readwrite");
         const store = tx.objectStore("refs");
         store.clear();
-        Object.entries(refs).forEach(([zone, imgs]) => {
-          if (imgs.length > 0) store.put(imgs, zone);
-        });
+        Object.entries(refs).forEach(([zone, imgs]) => { if (imgs.length > 0) store.put(imgs, zone); });
+        Object.entries(atlas).forEach(([zone, imgs]) => { if (imgs.length > 0) store.put(imgs, `atlas_${zone}`); });
       } catch (e) { console.error("Failed to save refs:", e); }
     };
     saveRefs();
-  }, [refs]);
+  }, [refs, atlas]);
+
+  // Save atlas to IndexedDB
+  const atlasInitialized = useRef(false);
+  useEffect(() => {
+    if (!atlasInitialized.current) { atlasInitialized.current = true; return; }
+    const saveAtlas = async () => {
+      try {
+        const db = await openDB();
+        const tx = db.transaction("atlas", "readwrite");
+        const store = tx.objectStore("atlas");
+        store.clear();
+        Object.entries(atlas).forEach(([zone, imgs]) => {
+          if (imgs.length > 0) store.put(imgs, zone);
+        });
+      } catch (e) { console.error("Failed to save atlas:", e); }
+    };
+    saveAtlas();
+  }, [atlas]);
 
   const flash = m => { setToast(m); setTimeout(() => setToast(null), 2500); };
 
@@ -659,6 +700,25 @@ export default function MRIInsight() {
 }
 Для кісток або суглобових поверхонь замість origin/insertion вкажи суглобові поверхні та зв'язки.
 Для менісків, хрящів — відповідну анатомію.` });
+
+      // Send atlas images (labeled anatomy references) if available
+      const zoneAtlas = atlas[study.zone] || [];
+      if (zoneAtlas.length > 0) {
+        parts.push({ text: "\n--- АНАТОМІЧНИЙ АТЛАС (підписані структури для орієнтації) ---" });
+        for (const a of zoneAtlas.slice(0, 10)) {
+          parts.push({ inline_data: { mime_type: "image/jpeg", data: a.data.split(",")[1] } });
+          if (a.label) parts.push({ text: `Підпис: ${a.label}` });
+        }
+      }
+
+      // Send reference normal images if available
+      const zoneRefs = refs[study.zone] || [];
+      if (zoneRefs.length > 0) {
+        parts.push({ text: "\n--- РЕФЕРЕНСИ НОРМИ (для порівняння) ---" });
+        for (const r of zoneRefs.slice(0, 5)) {
+          parts.push({ inline_data: { mime_type: "image/jpeg", data: r.data.split(",")[1] } });
+        }
+      }
 
       // Send full slice for context
       parts.push({ text: "\n--- ПОВНИЙ ЗРІЗ (для контексту) ---" });
@@ -971,26 +1031,81 @@ export default function MRIInsight() {
 
   const Lib = () => {
     const imgs = refs[selZone] || [];
+    const atlasImgs = atlas[selZone] || [];
     return (
       <div style={P.pg}>
-        <div style={P.top}><button onClick={() => setScr("dash")} style={P.bk}><ArrowLeft size={16} /> Назад</button><h2 style={P.pT}>Бібліотека норми</h2></div>
-        <div style={P.ztabs}>{Object.entries(ZONE_GROUPS).map(([gk, gv]) => <div key={gk} style={P.ztGroup}><span style={P.ztGLabel}>{gv.icon} {gv.label}</span><div style={P.ztRow}>{Object.entries(ZONES).filter(([_, z]) => z.group === gk).map(([k, v]) => <button key={k} onClick={() => setSelZone(k)} style={selZone === k ? P.ztOn : P.zt}>{v.short}{(refs[k] || []).length > 0 && <span style={P.ztB}>{(refs[k] || []).length}</span>}</button>)}</div></div>)}</div>
-        <div style={P.upRow}>
-          <div style={P.upC} onClick={() => refIn.current?.click()}><Upload size={20} style={{ color: "#06b6d4" }} /><span style={P.upL}>JPEG знімки</span><input ref={refIn} type="file" multiple accept="image/*" style={{ display: "none" }} onChange={e => uploadImgs(e.target.files, "ref")} /></div>
-          <div style={{ ...P.upC, opacity: pdfOk ? 1 : 0.4 }} onClick={() => pdfOk && pdfIn.current?.click()}><FileText size={20} style={{ color: "#a78bfa" }} /><span style={P.upL}>PDF книга</span><input ref={pdfIn} type="file" accept="application/pdf" style={{ display: "none" }} onChange={e => e.target.files[0] && uploadPdf(e.target.files[0])} /></div>
-          <div style={P.upC} onClick={() => flash("Скопіюйте зображення та натисніть Ctrl+V")}><span style={{ fontSize: 20 }}>📋</span><span style={P.upL}>Вставити</span></div>
+        <div style={P.top}><button onClick={() => setScr("dash")} style={P.bk}><ArrowLeft size={16} /> Назад</button><h2 style={P.pT}>Бібліотека</h2></div>
+
+        {/* Library tabs */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+          <button onClick={() => setLibTab("refs")} style={{ ...P.sm, padding: "8px 16px", fontSize: 12, background: libTab === "refs" ? "rgba(6,182,212,.14)" : "rgba(255,255,255,.04)", color: libTab === "refs" ? "#06b6d4" : "#64748b", border: libTab === "refs" ? "1px solid rgba(6,182,212,.3)" : "1px solid rgba(255,255,255,.07)" }}>
+            <BookOpen size={14} style={{ marginRight: 4 }} /> Референси норми
+          </button>
+          <button onClick={() => setLibTab("atlas")} style={{ ...P.sm, padding: "8px 16px", fontSize: 12, background: libTab === "atlas" ? "rgba(139,92,246,.14)" : "rgba(255,255,255,.04)", color: libTab === "atlas" ? "#a78bfa" : "#64748b", border: libTab === "atlas" ? "1px solid rgba(139,92,246,.3)" : "1px solid rgba(255,255,255,.07)" }}>
+            📖 Анатомічний атлас ({Object.values(atlas).reduce((s, a) => s + a.length, 0)})
+          </button>
         </div>
-        <p style={{ fontSize: 10, color: "#475569", marginTop: -8, marginBottom: 10, textAlign: "center" }}>Ctrl+V — вставити зображення з Radiopaedia або будь-якого сайту</p>
-        {imgs.length === 0 ? <div style={{ textAlign: "center", padding: "36px 16px" }}><BookOpen size={32} style={{ color: "#1e293b" }} /><p style={{ fontSize: 13, color: "#475569", marginTop: 10 }}>Завантажте знімки норми з книг</p></div>
-          : <><p style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>{imgs.length} реф. — "{ZONES[selZone].ua}"</p>
-            <div style={P.iGrid}>{imgs.map((im, i) => <div key={im.id} style={P.thBox}>
-              <img src={im.data} alt="" style={P.th} onClick={() => setViewImg(im)} />
-              <button onClick={() => setRefs(p => ({ ...p, [selZone]: p[selZone].filter(x => x.id !== im.id) }))} style={P.thDel}><X size={10} /></button>
-              <span style={P.thIdx}>{i + 1}</span>
-              {im.pg && <span style={P.thPg}>с.{im.pg}</span>}
-              {im.src === "clipboard" && !im.pg && <span style={P.thClip}>📋</span>}
-              {im.caption && <div style={P.thCap}>{im.caption}</div>}
-            </div>)}</div></>}
+
+        <div style={P.ztabs}>{Object.entries(ZONE_GROUPS).map(([gk, gv]) => <div key={gk} style={P.ztGroup}><span style={P.ztGLabel}>{gv.icon} {gv.label}</span><div style={P.ztRow}>{Object.entries(ZONES).filter(([_, z]) => z.group === gk).map(([k, v]) => {
+          const cnt = libTab === "refs" ? (refs[k] || []).length : (atlas[k] || []).length;
+          return <button key={k} onClick={() => setSelZone(k)} style={selZone === k ? P.ztOn : P.zt}>{v.short}{cnt > 0 && <span style={P.ztB}>{cnt}</span>}</button>;
+        })}</div></div>)}</div>
+
+        {libTab === "refs" ? (<>
+          {/* REFS TAB */}
+          <div style={P.upRow}>
+            <div style={P.upC} onClick={() => refIn.current?.click()}><Upload size={20} style={{ color: "#06b6d4" }} /><span style={P.upL}>JPEG знімки</span><input ref={refIn} type="file" multiple accept="image/*" style={{ display: "none" }} onChange={e => uploadImgs(e.target.files, "ref")} /></div>
+            <div style={{ ...P.upC, opacity: pdfOk ? 1 : 0.4 }} onClick={() => pdfOk && pdfIn.current?.click()}><FileText size={20} style={{ color: "#a78bfa" }} /><span style={P.upL}>PDF книга</span><input ref={pdfIn} type="file" accept="application/pdf" style={{ display: "none" }} onChange={e => e.target.files[0] && uploadPdf(e.target.files[0])} /></div>
+            <div style={P.upC} onClick={() => flash("Скопіюйте зображення та натисніть Ctrl+V")}><span style={{ fontSize: 20 }}>📋</span><span style={P.upL}>Вставити</span></div>
+          </div>
+          <p style={{ fontSize: 10, color: "#475569", marginTop: -8, marginBottom: 10, textAlign: "center" }}>Ctrl+V — вставити зображення з Radiopaedia або будь-якого сайту</p>
+          {imgs.length === 0 ? <div style={{ textAlign: "center", padding: "36px 16px" }}><BookOpen size={32} style={{ color: "#1e293b" }} /><p style={{ fontSize: 13, color: "#475569", marginTop: 10 }}>Завантажте знімки норми з книг</p></div>
+            : <><p style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>{imgs.length} реф. — "{ZONES[selZone].ua}"</p>
+              <div style={P.iGrid}>{imgs.map((im, i) => <div key={im.id} style={P.thBox}>
+                <img src={im.data} alt="" style={P.th} onClick={() => setViewImg(im)} />
+                <button onClick={() => setRefs(p => ({ ...p, [selZone]: p[selZone].filter(x => x.id !== im.id) }))} style={P.thDel}><X size={10} /></button>
+                <span style={P.thIdx}>{i + 1}</span>
+                {im.pg && <span style={P.thPg}>с.{im.pg}</span>}
+                {im.src === "clipboard" && !im.pg && <span style={P.thClip}>📋</span>}
+                {im.caption && <div style={P.thCap}>{im.caption}</div>}
+              </div>)}</div></>}
+        </>) : (<>
+          {/* ATLAS TAB */}
+          <div style={{ background: "rgba(139,92,246,.06)", border: "1px solid rgba(139,92,246,.12)", borderRadius: 10, padding: 12, marginBottom: 12 }}>
+            <p style={{ fontSize: 12, color: "#a78bfa", lineHeight: 1.5 }}>
+              📖 Завантажте підписані зображення анатомії з книг або атласів. Кожне зображення повинно мати опис — яка структура зображена. ІІ використовуватиме ці зображення при аналізі ROI для точнішої ідентифікації структур.
+            </p>
+          </div>
+          <div style={P.upRow}>
+            <div style={P.upC} onClick={() => atlasIn.current?.click()}><Upload size={20} style={{ color: "#a78bfa" }} /><span style={P.upL}>Додати зображення</span>
+              <input ref={atlasIn} type="file" multiple accept="image/*" style={{ display: "none" }} onChange={async (e) => {
+                const files = Array.from(e.target.files).filter(f => f.type.startsWith("image/"));
+                for (const f of files) {
+                  const d = await new Promise(r => { const fr = new FileReader(); fr.onload = ev => r(ev.target.result); fr.readAsDataURL(f); });
+                  const label = prompt(`Опис для "${f.name}":\nНаприклад: "ПКС на сагітальному зрізі, T2" або "Медіальний меніск, коронарна площина"`);
+                  if (label && label.trim()) {
+                    setAtlas(p => ({ ...p, [selZone]: [...(p[selZone] || []), { id: Date.now() + Math.random(), name: f.name, data: d, label: label.trim(), ts: Date.now() }] }));
+                  }
+                }
+                flash(`Додано до атласу`);
+              }} />
+            </div>
+          </div>
+          {atlasImgs.length === 0 ? <div style={{ textAlign: "center", padding: "36px 16px" }}><span style={{ fontSize: 32 }}>📖</span><p style={{ fontSize: 13, color: "#475569", marginTop: 10 }}>Додайте підписані зображення анатомії</p><p style={{ fontSize: 11, color: "#334155", marginTop: 4 }}>Сторінки з атласу, схеми, підписані МРТ</p></div>
+            : <><p style={{ fontSize: 12, color: "#a78bfa", marginBottom: 6 }}>{atlasImgs.length} зображень атласу — "{ZONES[selZone].ua}"</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 8 }}>
+                {atlasImgs.map((im) => (
+                  <div key={im.id} style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(139,92,246,.12)", borderRadius: 8, overflow: "hidden", position: "relative" }}>
+                    <img src={im.data} alt="" style={{ width: "100%", display: "block", cursor: "pointer" }} onClick={() => setViewImg(im)} />
+                    <div style={{ padding: "6px 8px", background: "rgba(139,92,246,.06)" }}>
+                      <p style={{ fontSize: 11, color: "#a78bfa", fontWeight: 600, lineHeight: 1.3 }}>{im.label}</p>
+                    </div>
+                    <button onClick={() => setAtlas(p => ({ ...p, [selZone]: (p[selZone] || []).filter(x => x.id !== im.id) }))}
+                      style={{ position: "absolute", top: 3, right: 3, background: "rgba(0,0,0,.7)", border: "none", borderRadius: 4, padding: 2, color: "#ef4444", cursor: "pointer" }}><X size={10} /></button>
+                  </div>
+                ))}
+              </div></>}
+        </>)}
 
         {pdfM && <div style={P.ov} onClick={() => !pdfM.ld && setPdfM(null)}><div style={P.pdfPan} onClick={e => e.stopPropagation()}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><div><h3 style={P.panT}>{pdfM.nm}</h3><p style={P.ht}>{pdfM.tot} стор. · Обрано: {pdfM.sel.size}</p></div>{!pdfM.ld && <button onClick={() => setPdfM(null)} style={P.clX}><X size={14} /></button>}</div>
