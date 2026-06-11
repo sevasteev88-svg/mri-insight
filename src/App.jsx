@@ -819,30 +819,37 @@ export default function MRIInsight() {
       if (!cropped) { flash("Занадто мала ділянка"); setRoiLoading(false); return; }
 
       const parts = [];
-      parts.push({ text: `Ти радіолог-експерт та анатом. Лікар виділив конкретну ділянку на МРТ знімку для детального аналізу.
-Зона: ${ZONES[study.zone]?.ua}
-Серія: ${seriesKey()}
+      parts.push({ text: `Ти досвідчений анатом, який допомагає лікарю ОРІЄНТУВАТИСЯ на МРТ — визначити, яка анатомічна структура потрапила у виділену ділянку. Ти НЕ ставиш діагноз. Лікар сам вирішує про патологію, дивлячись на знімок. Твоє завдання — допомогти зрозуміти АНАТОМІЮ.
+
+ВАЖЛИВО — уникай типових помилок ідентифікації:
+- Не давай категоричної відповіді, якщо структуру важко відрізнити від сусідніх. Краще вкажи 2-3 кандидати.
+- Хрестоподібні зв'язки коліна (ПХЗ vs ЗХЗ) часто плутають. Щоб їх розрізнити, ОБОВ'ЯЗКОВО перевір: ПХЗ йде від ЗАДНЬОЇ частини медіальної поверхні латерального виростка стегна передньо-донизу до переднього міжвиросткового підвищення великогомілкової кістки. ЗХЗ йде від латеральної поверхні медіального виростка задньо-донизу. Орієнтуйся на точки прикріплення та напрямок волокон, а не на товщину.
+- М'язи задньої поверхні стегна і гомілки схожі між собою — розрізняй за взаємним розташуванням (медіально/латерально/глибоко/поверхнево).
+- Використовуй надані зображення з атласу як орієнтир.
+
+Зона зйомки: ${ZONES[study.zone]?.ua}
+Серія: ${seriesKey()} (послідовність та площина)
 Зріз: ${splitIdx + 1}
 
-Проаналізуй ВИДІЛЕНУ ДІЛЯНКУ максимально детально. Відповідай ТІЛЬКИ JSON українською:
+Відповідай ТІЛЬКИ JSON українською:
 {
-  "structure": "Назва анатомічної структури",
+  "candidates": [
+    {"structure":"Найімовірніша структура","reasoning":"Чому саме вона — за розташуванням, орієнтацією, точками прикріплення","id_confidence":75}
+  ],
+  "id_confidence_overall": 75,
   "anatomy": {
-    "description": "Що це за структура — коротко, 1-2 речення",
-    "function": "Яку функцію виконує",
-    "origin": "Місце початку/проксимальне прикріплення (для м'язів та зв'язок)",
-    "insertion": "Місце прикріплення/дистальне прикріплення",
-    "innervation": "Іннервація (для м'язів)",
-    "clinical_note": "Клінічне значення — яка патологія найчастіше трапляється"
+    "description":"Що це за структура (для найімовірнішого кандидата)",
+    "function":"Функція",
+    "origin":"Початок/проксимальне прикріплення",
+    "insertion":"Прикріплення/дистальне",
+    "innervation":"Іннервація (для м'язів)",
+    "typical_pathologies":"Які патології ТИПОВО трапляються тут (перелік, НЕ діагноз цього знімка)"
   },
-  "findings": "Детальний опис того що бачиш на знімку",
-  "pathology": "Є патологія чи норма — конкретно",
-  "confidence_level": 85,
-  "severity": "normal|mild|moderate|severe",
-  "recommendation": "Рекомендація"
+  "what_to_check": "На що лікарю звернути увагу при оцінці цієї структури на МРТ — без вердикту, просто орієнтир (норма виглядає так-то; ознаки проблеми бувають такі)",
+  "uncertainty_note": "Чесно: що ускладнює ідентифікацію, з чим можна сплутати"
 }
-Для кісток або суглобових поверхонь замість origin/insertion вкажи суглобові поверхні та зв'язки.
-Для менісків, хрящів — відповідну анатомію.` });
+
+Дай 1-3 кандидати. id_confidence — наскільки впевнений що це САМЕ ЦЯ структура (0-100). Якщо структуру важко визначити — постав нижчу впевненість і додай більше кандидатів. Не вигадуй патологію — це робота лікаря.` });
 
       // Send atlas images (labeled anatomy references) — includes related detailed structures
       const zoneAtlas = collectZoneMaterials(atlas, study.zone);
@@ -887,7 +894,7 @@ export default function MRIInsight() {
 
       const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const clean = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      try { setRoiResult(JSON.parse(clean)); } catch { setRoiResult({ structure: "Аналіз", findings: clean, pathology: "—", confidence_level: 50, severity: "mild", recommendation: "" }); }
+      try { setRoiResult(JSON.parse(clean)); } catch { setRoiResult({ candidates: [{ structure: "Не вдалося розпарсити", reasoning: clean, id_confidence: 0 }], id_confidence_overall: 0, anatomy: {}, what_to_check: "", uncertainty_note: "" }); }
     } catch (err) {
       flash(`Помилка: ${err.message}`);
     } finally {
@@ -1568,13 +1575,13 @@ export default function MRIInsight() {
               <button disabled={splitIdx >= im.length - 1} onClick={() => { setSplitIdx(splitIdx + 1); setRoi(null); setRoiResult(null); }} style={P.nv}><ChevronRight size={14} /></button>
               <button onClick={() => recording === noteKey ? stopVoice() : startVoice(noteKey)} style={{ ...P.sm, marginLeft: 4, background: recording === noteKey ? "rgba(239,68,68,.18)" : "rgba(255,255,255,.04)", color: recording === noteKey ? "#ef4444" : "#94a3b8" }}>{recording === noteKey ? <MicOff size={11} /> : <Mic size={11} />}</button>
               {roi && roi.w > 0.02 && (
-                <button onClick={analyzeRoi} disabled={roiLoading} style={{ ...P.sm, padding: "4px 12px", background: "rgba(245,158,11,.14)", border: "1px solid rgba(245,158,11,.3)", color: "#f59e0b" }}>
-                  {roiLoading ? "⏳ Аналіз..." : <><Crosshair size={12} /> Аналіз ділянки</>}
+                <button onClick={analyzeRoi} disabled={roiLoading} style={{ ...P.sm, padding: "4px 12px", background: "rgba(224,169,59,.14)", border: "0.5px solid rgba(224,169,59,.3)", color: "#e0a93b" }}>
+                  {roiLoading ? "⏳ Визначення..." : <><Crosshair size={12} /> Що це за структура?</>}
                 </button>
               )}
-              {roi && <button onClick={() => { setRoi(null); setRoiResult(null); }} style={{ ...P.sm, padding: "4px 8px", color: "#64748b" }}><X size={12} /></button>}
+              {roi && <button onClick={() => { setRoi(null); setRoiResult(null); }} style={{ ...P.sm, padding: "4px 8px", color: "#8b919c" }}><X size={12} /></button>}
             </div>
-            {!roi && <p style={{ fontSize: 9, color: "#475569", textAlign: "center" }}>Виділіть мишкою ділянку для аналізу ІІ</p>}
+            {!roi && <p style={{ fontSize: 9, color: "#5f6672", textAlign: "center" }}>Виділіть мишкою структуру — ІІ допоможе визначити що це</p>}
           </div>
           {/* REFERENCE */}
           <div style={{ background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column" }}>
@@ -1588,68 +1595,74 @@ export default function MRIInsight() {
               <button disabled={refIdx >= zr.length - 1} onClick={() => setRefIdx(refIdx + 1)} style={P.nv}><ChevronRight size={14} /></button>
             </div>}
           </div>
-          {/* ROI RESULT PANEL */}
-          {roiResult && (
-            <div style={{ background: "rgba(245,158,11,.04)", border: "1px solid rgba(245,158,11,.15)", borderRadius: 8, padding: 12, overflowY: "auto" }}>
-              <h4 style={{ fontSize: 13, fontWeight: 700, color: "#f59e0b", marginBottom: 8, display: "flex", alignItems: "center", gap: 4 }}><Crosshair size={14} /> Аналіз ділянки</h4>
+          {/* ROI RESULT PANEL — ORIENTATION MODE */}
+          {roiResult && (() => {
+            const cands = roiResult.candidates || [];
+            const idConf = roiResult.id_confidence_overall ?? (cands[0]?.id_confidence ?? 0);
+            const confColorVal = idConf >= 80 ? "#4ec99b" : idConf >= 60 ? "#e0a93b" : "#e24b4a";
+            const anat = roiResult.anatomy || {};
+            return (
+              <div style={{ background: "#13161c", border: "0.5px solid rgba(224,169,59,.18)", borderRadius: 8, padding: 12, overflowY: "auto" }}>
+                <h4 style={{ fontSize: 13, fontWeight: 500, color: "#e0a93b", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><Crosshair size={14} /> Орієнтація — що це за структура</h4>
+                <p style={{ fontSize: 10, color: "#5f6672", marginBottom: 10, lineHeight: 1.4 }}>ІІ допомагає визначити анатомію. Рішення про патологію — за лікарем.</p>
 
-              {/* Structure name */}
-              <div style={{ marginBottom: 8, padding: "8px 10px", background: "rgba(255,255,255,.04)", borderRadius: 6 }}>
-                <p style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Структура</p>
-                <p style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9" }}>{roiResult.structure}</p>
-              </div>
-
-              {/* Anatomy reference */}
-              {roiResult.anatomy && (
-                <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(139,92,246,.06)", border: "1px solid rgba(139,92,246,.12)", borderRadius: 6 }}>
-                  <p style={{ fontSize: 10, fontWeight: 600, color: "#a78bfa", textTransform: "uppercase", marginBottom: 6 }}>📖 Анатомічна довідка</p>
-                  {roiResult.anatomy.description && <p style={{ fontSize: 11, color: "#cbd5e1", marginBottom: 4, lineHeight: 1.4 }}>{roiResult.anatomy.description}</p>}
-                  {roiResult.anatomy.function && (
-                    <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#a78bfa", fontWeight: 600 }}>Функція: </span><span style={{ fontSize: 11, color: "#94a3b8" }}>{roiResult.anatomy.function}</span></div>
-                  )}
-                  {roiResult.anatomy.origin && (
-                    <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#a78bfa", fontWeight: 600 }}>Початок: </span><span style={{ fontSize: 11, color: "#94a3b8" }}>{roiResult.anatomy.origin}</span></div>
-                  )}
-                  {roiResult.anatomy.insertion && (
-                    <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#a78bfa", fontWeight: 600 }}>Прикріплення: </span><span style={{ fontSize: 11, color: "#94a3b8" }}>{roiResult.anatomy.insertion}</span></div>
-                  )}
-                  {roiResult.anatomy.innervation && (
-                    <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#a78bfa", fontWeight: 600 }}>Іннервація: </span><span style={{ fontSize: 11, color: "#94a3b8" }}>{roiResult.anatomy.innervation}</span></div>
-                  )}
-                  {roiResult.anatomy.clinical_note && (
-                    <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(139,92,246,.1)" }}>
-                      <span style={{ fontSize: 10, color: "#f59e0b", fontWeight: 600 }}>⚕ Клінічне: </span><span style={{ fontSize: 11, color: "#fbbf24" }}>{roiResult.anatomy.clinical_note}</span>
+                {/* Candidates */}
+                <div style={{ marginBottom: 10 }}>
+                  <p style={{ fontSize: 10, color: "#8b919c", textTransform: "uppercase", marginBottom: 5, fontFamily: "'JetBrains Mono',monospace" }}>Кандидати структури</p>
+                  {cands.map((c, i) => (
+                    <div key={i} style={{ background: i === 0 ? "rgba(74,163,223,.07)" : "#0f1217", border: `0.5px solid ${i === 0 ? "rgba(74,163,223,.25)" : "rgba(255,255,255,.05)"}`, borderRadius: 6, padding: "8px 10px", marginBottom: 5 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                        <span style={{ fontSize: 13, fontWeight: 500, color: i === 0 ? "#e8eaed" : "#c4c9d0" }}>{i === 0 && "★ "}{c.structure}</span>
+                        <span style={{ fontSize: 11, fontWeight: 500, fontFamily: "'JetBrains Mono',monospace", color: c.id_confidence >= 80 ? "#4ec99b" : c.id_confidence >= 60 ? "#e0a93b" : "#e24b4a", whiteSpace: "nowrap" }}>{c.id_confidence}%</span>
+                      </div>
+                      {c.reasoning && <p style={{ fontSize: 11, color: "#8b919c", lineHeight: 1.4 }}>{c.reasoning}</p>}
                     </div>
-                  )}
+                  ))}
                 </div>
-              )}
 
-              {/* MRI findings */}
-              <div style={{ marginBottom: 8 }}>
-                <p style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Що видно на знімку</p>
-                <p style={{ fontSize: 12, lineHeight: 1.5, color: "#cbd5e1" }}>{roiResult.findings}</p>
+                {/* Overall ID confidence */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, padding: "8px 10px", background: "#0f1217", borderRadius: 6 }}>
+                  <span style={{ fontSize: 11, color: "#8b919c" }}>Впевненість в ідентифікації:</span>
+                  <span style={{ fontSize: 13, fontWeight: 500, fontFamily: "'JetBrains Mono',monospace", color: confColorVal }}>{idConf}%</span>
+                </div>
+
+                {/* Uncertainty note */}
+                {roiResult.uncertainty_note && (
+                  <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(224,169,59,.06)", border: "0.5px solid rgba(224,169,59,.15)", borderRadius: 6 }}>
+                    <p style={{ fontSize: 10, fontWeight: 500, color: "#e0a93b", marginBottom: 3, display: "flex", alignItems: "center", gap: 4 }}><AlertCircle size={11} /> Що ускладнює визначення</p>
+                    <p style={{ fontSize: 11, color: "#c4c9d0", lineHeight: 1.4 }}>{roiResult.uncertainty_note}</p>
+                  </div>
+                )}
+
+                {/* Anatomy reference */}
+                {(anat.description || anat.function || anat.origin) && (
+                  <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(155,140,219,.06)", border: "0.5px solid rgba(155,140,219,.12)", borderRadius: 6 }}>
+                    <p style={{ fontSize: 10, fontWeight: 500, color: "#9b8cdb", textTransform: "uppercase", marginBottom: 6, fontFamily: "'JetBrains Mono',monospace" }}>Анатомічна довідка</p>
+                    {anat.description && <p style={{ fontSize: 11, color: "#c4c9d0", marginBottom: 4, lineHeight: 1.4 }}>{anat.description}</p>}
+                    {anat.function && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Функція: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.function}</span></div>}
+                    {anat.origin && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Початок: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.origin}</span></div>}
+                    {anat.insertion && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Прикріплення: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.insertion}</span></div>}
+                    {anat.innervation && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Іннервація: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.innervation}</span></div>}
+                    {anat.typical_pathologies && (
+                      <div style={{ marginTop: 4, paddingTop: 4, borderTop: "0.5px solid rgba(155,140,219,.1)" }}>
+                        <span style={{ fontSize: 10, color: "#e0a93b", fontWeight: 500 }}>Типові патології тут: </span><span style={{ fontSize: 11, color: "#c4c9d0" }}>{anat.typical_pathologies}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* What to check */}
+                {roiResult.what_to_check && (
+                  <div style={{ background: "rgba(74,163,223,.07)", borderRadius: 6, padding: "8px 10px" }}>
+                    <p style={{ fontSize: 10, color: "#4aa3df", fontWeight: 500, marginBottom: 3, display: "flex", alignItems: "center", gap: 4 }}><Eye size={11} /> На що звернути увагу</p>
+                    <p style={{ fontSize: 11, color: "#c4c9d0", lineHeight: 1.4 }}>{roiResult.what_to_check}</p>
+                  </div>
+                )}
+
+                <p style={{ fontSize: 9, color: "#5f6672", marginTop: 10, lineHeight: 1.4, textAlign: "center" }}>Остаточне рішення про патологію приймає лікар на основі знімка</p>
               </div>
-
-              {/* Pathology + confidence */}
-              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Патологія</p>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{roiResult.pathology}</p>
-                </div>
-                <div>
-                  <p style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Впевненість</p>
-                  <span style={{ fontSize: 12, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: cc?.bg, color: cc?.c }}>{roiResult.confidence_level}%</span>
-                </div>
-              </div>
-
-              {roiResult.recommendation && (
-                <div style={{ background: "rgba(6,182,212,.08)", borderRadius: 6, padding: 8, marginTop: 4 }}>
-                  <p style={{ fontSize: 10, color: "#06b6d4", fontWeight: 600, marginBottom: 2 }}>Рекомендація</p>
-                  <p style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.4 }}>{roiResult.recommendation}</p>
-                </div>
-              )}
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     );
