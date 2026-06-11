@@ -98,26 +98,46 @@ const RADIO_MAP = {
   "міозит": "myositis MRI", "фасціїт": "fasciitis MRI",
 };
 
-const SYS_PROMPT = `You are an expert musculoskeletal radiologist assistant helping a sports medicine doctor.
-You receive: 1) REFERENCE normal MRI images from atlases, 2) PATIENT MRI series to analyze.
-Compare patient with references. Find ALL deviations and pathologies.
+const SYS_PROMPT = `You are an expert musculoskeletal radiologist with 20+ years of experience, assisting a sports medicine physician. Your goal is MAXIMUM diagnostic accuracy.
+
+You receive: 1) REFERENCE normal MRI images, 2) optional ATLAS/knowledge-base rules, 3) PATIENT MRI series (possibly multiple sequences and planes), 4) optional clinical context.
+
+ANALYSIS METHOD — think step by step (chain-of-thought):
+STEP 1 — Orientation: For each series identify the sequence (T1/T2/STIR/PD) and plane (sagittal/coronal/axial). Note what each sequence is best for (T2/STIR = fluid/edema, T1 = anatomy/fat/marrow, PD = cartilage/menisci).
+STEP 2 — Systematic review: Examine EACH anatomical structure relevant to the zone, one by one. Compare each with the normal reference.
+STEP 3 — Signal analysis: For each abnormality assess signal intensity across sequences (a true lesion appears consistently across sequences; artifacts do not).
+STEP 4 — Correlate: Cross-check findings between planes and sequences. A real finding is visible on multiple slices/sequences.
+STEP 5 — Differential: For each significant finding, give the MOST LIKELY diagnosis plus 1-2 alternatives with relative likelihood.
+STEP 6 — Confidence: Rate confidence honestly. High (85-100) only if clearly visible on multiple sequences. Medium (60-84) if suggestive. Low (<60) if subtle/single-sequence.
 
 RULES:
 - Respond ONLY in valid JSON, ALL text in Ukrainian
-- confidence_level: integer 0-100 for each finding
-- Add pulse_sequence_hint if a different sequence would help confirm
-- Analyze based on zone: joints (bone, cartilage, ligaments, menisci, tendons, soft tissues, joint space, effusion), spine (discs, vertebral bodies, spinal cord, neural foramina, facet joints, ligaments), head (brain parenchyma, ventricles, white/gray matter, meninges, vessels), muscles (muscle fibers, fascial planes, tendons, intermuscular septa, edema, tears)
+- Be specific: location, size estimate (small/moderate/large), signal characteristics
+- Distinguish acute vs chronic when possible
+- If a different sequence/plane would help confirm, say so in pulse_sequence_hint
+- Do NOT invent findings. If normal, say so. False positives are as harmful as false negatives.
 
 JSON:
 {
-  "findings": [{"id":1,"structure":"Назва","description":"Опис","slices":"3-5","confidence_level":85,"severity":"normal|mild|moderate|severe","pulse_sequence_hint":"optional"}],
-  "summary": "Висновок",
-  "recommendation": "Рекомендація",
-  "radiopaedia_terms": ["ACL tear","bone marrow edema"]
+  "reading_steps": "Короткий опис того, що ти послідовно перевірив (1-2 речення)",
+  "findings": [{
+    "id":1,
+    "structure":"Анатомічна структура",
+    "description":"Детальний опис: локалізація, розмір, характер сигналу на різних послідовностях",
+    "slices":"T2_Sag: 3-5",
+    "differential":[{"diagnosis":"Найімовірніший діагноз","likelihood":"висока"},{"diagnosis":"Альтернатива","likelihood":"низька"}],
+    "confidence_level":85,
+    "severity":"normal|mild|moderate|severe",
+    "acuity":"гострий|хронічний|невизначено",
+    "pulse_sequence_hint":"optional"
+  }],
+  "summary":"Структурований висновок",
+  "recommendation":"Клінічна рекомендація — додаткові дослідження, консультації",
+  "radiopaedia_terms":["ACL tear","bone marrow edema"]
 }
-Empty findings array if normal.`;
+Empty findings array if completely normal.`;
 
-function anonymizeImage(dataUrl, crop = 40) {
+function anonymizeImage(dataUrl, crop = 12) {
   return new Promise(res => {
     const img = new window.Image();
     img.onload = () => {
@@ -127,11 +147,12 @@ function anonymizeImage(dataUrl, crop = 40) {
       c.width = w; c.height = h;
       const ctx = c.getContext("2d");
       ctx.drawImage(img, crop, crop, w, h, 0, 0, w, h);
+      // Black out only TOP corners where patient name/DOB usually appears (not bottom — sequence params there help AI)
       ctx.fillStyle = "#000";
-      const bw = Math.min(200, w * 0.3);
-      ctx.fillRect(0, 0, bw, 28); ctx.fillRect(w - bw, 0, bw, 28);
-      ctx.fillRect(0, h - 28, bw, 28); ctx.fillRect(w - bw, h - 28, bw, 28);
-      res(c.toDataURL("image/jpeg", 0.85));
+      const bw = Math.min(180, w * 0.28);
+      ctx.fillRect(0, 0, bw, 24);
+      ctx.fillRect(w - bw, 0, bw, 24);
+      res(c.toDataURL("image/jpeg", 0.95));
     };
     img.src = dataUrl;
   });
@@ -264,6 +285,7 @@ export default function MRIInsight() {
   const [scr, setScr] = useState("dash");
   const [apiKey, setApiKey] = useState("");
   const [apiKeyIn, setApiKeyIn] = useState("");
+  const [aiModel, setAiModel] = useState("gemini-2.5-pro");
   const [refs, setRefs] = useState({});
   const [atlas, setAtlas] = useState({}); // {zone: [{id, name, data, label}]}
   const [kb, setKb] = useState({}); // {zone: [{id, title, text}]}
@@ -338,6 +360,7 @@ export default function MRIInsight() {
     } else setPdfOk(true);
     (async () => {
       try { const r = localStorage.getItem("mri-key"); if (r) { setApiKey(r); setApiKeyIn(r); } } catch {}
+      try { const r = localStorage.getItem("mri-model"); if (r) setAiModel(r); } catch {}
       try { const r = localStorage.getItem("mri-hist"); if (r) setStudies(JSON.parse(r)); } catch {}
       // Load refs, atlas, kb from IndexedDB
       try {
@@ -421,7 +444,7 @@ export default function MRIInsight() {
       const vp = pg.getViewport({ scale: 1.5 });
       const c = document.createElement("canvas"); c.width = vp.width; c.height = vp.height;
       await pg.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
-      out.push({ id: Date.now() + Math.random(), name: `${nm} — стор. ${sorted[i]}`, data: c.toDataURL("image/jpeg", 0.85), ts: Date.now(), pg: sorted[i] });
+      out.push({ id: Date.now() + Math.random(), name: `${nm} — стор. ${sorted[i]}`, data: c.toDataURL("image/jpeg", 0.95), ts: Date.now(), pg: sorted[i] });
       setPdfM(p => p ? { ...p, pr: Math.round(((i + 1) / sorted.length) * 100) } : null);
     }
     setRefs(p => ({ ...p, [selZone]: [...(p[selZone] || []), ...out] }));
@@ -440,7 +463,7 @@ export default function MRIInsight() {
   const stopVoice = () => { if (recRef.current) recRef.current.stop(); setRecording(null); };
 
   const newStudy = () => {
-    setStudy({ id: Date.now(), patientName: "", zone: "knee", activeSeq: "T2", activePlane: "Sag", series: {}, findings: null, status: "draft", date: new Date().toLocaleDateString("uk-UA") });
+    setStudy({ id: Date.now(), patientName: "", age: "", complaints: "", mechanism: "", zone: "knee", activeSeq: "T2", activePlane: "Sag", series: {}, findings: null, status: "draft", date: new Date().toLocaleDateString("uk-UA") });
     setVnotes({}); setScr("new");
   };
 
@@ -536,7 +559,7 @@ export default function MRIInsight() {
 
       parts.push({ text: "\nПорівняй заключення центру зі своїми знахідками. Будь детальним." });
 
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.15, maxOutputTokens: 8192 } })
       });
@@ -712,7 +735,7 @@ export default function MRIInsight() {
       parts.push({ text: "\n--- ВИДІЛЕНА ДІЛЯНКА (пріоритет аналізу) ---" });
       parts.push({ inline_data: { mime_type: "image/jpeg", data: cropped.split(",")[1] } });
 
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.15, maxOutputTokens: 4096 } })
       });
@@ -776,6 +799,13 @@ export default function MRIInsight() {
       const parts = [{ text: SYS_PROMPT }];
       parts.push({ text: `\nЗона: ${ZONES[study.zone].ua}\nСерії: ${usedSeqs.join(", ")}\nЗагальна кількість зрізів: ${all.length}\n` });
 
+      // Clinical context
+      const ctx = [];
+      if (study.age) ctx.push(`Вік: ${study.age}`);
+      if (study.complaints) ctx.push(`Скарги: ${study.complaints}`);
+      if (study.mechanism) ctx.push(`Механізм травми / анамнез: ${study.mechanism}`);
+      if (ctx.length) parts.push({ text: `\n--- КЛІНІЧНИЙ КОНТЕКСТ ---\n${ctx.join("\n")}\nВраховуй цей контекст при діагностиці.\n` });
+
       // Few-shot learning: include past confirmed corrections
       const pastCases = await getPastCorrections(study.zone);
       if (pastCases.length > 0) {
@@ -811,7 +841,7 @@ export default function MRIInsight() {
       parts.push({ text: "\nПроаналізуй ВСІ серії та зрізи. У findings вказуй серію та номери зрізів (наприклад slices: 'T2: 3-5, STIR: 12-14'). Порівняй з нормою, знайди ВСІ відхилення." });
 
       setProg({ s: "ai", p: 55 });
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.15, maxOutputTokens: 8192 } })
       });
@@ -1179,6 +1209,11 @@ export default function MRIInsight() {
         <label style={P.lb}>Пацієнт</label>
         <input value={study?.patientName || ""} onChange={e => setStudy(p => ({ ...p, patientName: e.target.value }))} placeholder="ПІБ або ID" style={P.inp} />
 
+        <label style={P.lb}>Клінічний контекст (підвищує точність ІІ)</label>
+        <input value={study?.age || ""} onChange={e => setStudy(p => ({ ...p, age: e.target.value }))} placeholder="Вік пацієнта" style={{ ...P.inp, marginBottom: 6 }} />
+        <input value={study?.complaints || ""} onChange={e => setStudy(p => ({ ...p, complaints: e.target.value }))} placeholder="Скарги (напр. біль у коліні при згинанні)" style={{ ...P.inp, marginBottom: 6 }} />
+        <input value={study?.mechanism || ""} onChange={e => setStudy(p => ({ ...p, mechanism: e.target.value }))} placeholder="Механізм травми / анамнез" style={P.inp} />
+
         <label style={P.lb}>Зона дослідження</label>
         {Object.entries(ZONE_GROUPS).map(([gk, gv]) => <div key={gk} style={{ marginBottom: 8 }}><p style={P.grpLabel}>{gv.icon} {gv.label}</p><div style={P.g2}>{Object.entries(ZONES).filter(([_, z]) => z.group === gk).map(([k, v]) => <button key={k} onClick={() => setStudy(p => ({ ...p, zone: k }))} style={study?.zone === k ? P.selOn : P.sel}>{v.short}{(refs[k] || []).length > 0 && <span style={{ display: "block", fontSize: 10, color: "#475569", marginTop: 1 }}>{(refs[k] || []).length} реф.</span>}</button>)}</div></div>)}
 
@@ -1446,7 +1481,21 @@ export default function MRIInsight() {
               <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 5, background: cc.bg, color: cc.c, fontFamily: "'JetBrains Mono',monospace" }}>{x.confidence_level ?? "?"}%</span>
             </div>
             <p style={{ fontSize: 13, lineHeight: 1.6, color: "#94a3b8" }}>{x.description}</p>
-            {x.slices && x.slices !== "-" && <p onClick={() => goToSlice(x.slices)} style={{ fontSize: 11, color: "#06b6d4", marginTop: 5, display: "flex", alignItems: "center", gap: 3, cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2 }}><Eye size={12} /> Зрізи: {x.slices} →</p>}
+            {x.differential?.length > 0 && (
+              <div style={{ marginTop: 6, padding: "6px 8px", background: "rgba(139,92,246,.06)", borderRadius: 6 }}>
+                <p style={{ fontSize: 10, color: "#a78bfa", fontWeight: 600, marginBottom: 3, textTransform: "uppercase" }}>Диференційна діагностика</p>
+                {x.differential.map((d, di) => (
+                  <div key={di} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#cbd5e1", padding: "1px 0" }}>
+                    <span>{d.diagnosis}</span>
+                    <span style={{ color: d.likelihood === "висока" ? "#22c55e" : d.likelihood === "низька" ? "#64748b" : "#eab308", fontWeight: 600 }}>{d.likelihood}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+              {x.slices && x.slices !== "-" && <span onClick={() => goToSlice(x.slices)} style={{ fontSize: 11, color: "#06b6d4", display: "flex", alignItems: "center", gap: 3, cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 2 }}><Eye size={12} /> Зрізи: {x.slices} →</span>}
+              {x.acuity && x.acuity !== "невизначено" && <span style={{ fontSize: 10, color: "#94a3b8", background: "rgba(255,255,255,.05)", padding: "1px 7px", borderRadius: 5 }}>{x.acuity}</span>}
+            </div>
           </div>;
         })}</div>}
 
@@ -1583,7 +1632,17 @@ export default function MRIInsight() {
       {scr === "radio" && <RadioScreen setScr={setScr} />}
       {scr === "loading" && Loading()}{scr === "results" && Results()}
 
-      {showSet && <div style={P.ov} onClick={() => setShowSet(false)}><div style={P.pan} onClick={e => e.stopPropagation()}><h3 style={P.panT}>Налаштування</h3><label style={P.lb}>Gemini API Key</label><input type="password" value={apiKeyIn} onChange={e => setApiKeyIn(e.target.value)} placeholder="AIza..." style={P.inp} /><p style={P.ht}>Отримайте на <span style={{ color: "#06b6d4" }}>ai.google.dev</span></p><button onClick={saveKey} style={P.pri}>Зберегти</button></div></div>}
+      {showSet && <div style={P.ov} onClick={() => setShowSet(false)}><div style={P.pan} onClick={e => e.stopPropagation()}><h3 style={P.panT}>Налаштування</h3><label style={P.lb}>Gemini API Key</label><input type="password" value={apiKeyIn} onChange={e => setApiKeyIn(e.target.value)} placeholder="AIza..." style={P.inp} /><p style={P.ht}>Отримайте на <span style={{ color: "#06b6d4" }}>ai.google.dev</span></p>
+        <label style={{ ...P.lb, marginTop: 14 }}>Модель ІІ</label>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <button onClick={() => { setAiModel("gemini-2.5-pro"); try { localStorage.setItem("mri-model", "gemini-2.5-pro"); } catch {} }} style={{ ...P.sm, padding: "10px 12px", textAlign: "left", justifyContent: "flex-start", background: aiModel === "gemini-2.5-pro" ? "rgba(6,182,212,.14)" : "rgba(255,255,255,.04)", border: aiModel === "gemini-2.5-pro" ? "1px solid rgba(6,182,212,.3)" : "1px solid rgba(255,255,255,.07)" }}>
+            <div><p style={{ fontSize: 13, fontWeight: 600, color: aiModel === "gemini-2.5-pro" ? "#06b6d4" : "#e2e8f0" }}>Gemini 2.5 Pro {aiModel === "gemini-2.5-pro" && "✓"}</p><p style={{ fontSize: 10, color: "#64748b" }}>Найвища точність · рекомендовано для діагностики</p></div>
+          </button>
+          <button onClick={() => { setAiModel("gemini-2.5-flash"); try { localStorage.setItem("mri-model", "gemini-2.5-flash"); } catch {} }} style={{ ...P.sm, padding: "10px 12px", textAlign: "left", justifyContent: "flex-start", background: aiModel === "gemini-2.5-flash" ? "rgba(6,182,212,.14)" : "rgba(255,255,255,.04)", border: aiModel === "gemini-2.5-flash" ? "1px solid rgba(6,182,212,.3)" : "1px solid rgba(255,255,255,.07)" }}>
+            <div><p style={{ fontSize: 13, fontWeight: 600, color: aiModel === "gemini-2.5-flash" ? "#06b6d4" : "#e2e8f0" }}>Gemini 2.5 Flash {aiModel === "gemini-2.5-flash" && "✓"}</p><p style={{ fontSize: 10, color: "#64748b" }}>Швидше та дешевше · для рутинного огляду</p></div>
+          </button>
+        </div>
+        <button onClick={saveKey} style={{ ...P.pri, marginTop: 14 }}>Зберегти</button></div></div>}
 
       {viewImg && <div style={P.ov} onClick={() => setViewImg(null)}><div style={{ position: "relative", maxWidth: "92vw", maxHeight: "90vh", display: "flex", flexDirection: "column", alignItems: "center" }} onClick={e => e.stopPropagation()}>
         <button onClick={() => setViewImg(null)} style={P.clX}><X size={14} /></button>
