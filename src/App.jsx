@@ -68,16 +68,72 @@ const ZONES = {
   t_spine: { ua: "Грудний відділ хребта", short: "Грудний", en: "thoracic spine", group: "spine" },
   l_spine: { ua: "Поперековий відділ хребта", short: "Поперековий", en: "lumbar spine", group: "spine" },
   head: { ua: "Голова (головний мозок)", short: "Голова", en: "brain head", group: "head" },
-  m_thigh: { ua: "М'язи стегна", short: "Стегно", en: "thigh muscles", group: "muscles" },
-  m_calf: { ua: "М'язи гомілки", short: "Гомілка", en: "calf muscles", group: "muscles" },
-  m_shoulder: { ua: "М'язи плеча", short: "Плече", en: "shoulder muscles", group: "muscles" },
+
+  // М'язи стегна — передня група
+  m_rectus_femoris: { ua: "Прямий м'яз стегна", short: "Прямий", en: "rectus femoris", group: "muscles", sub: "thigh_ant" },
+  m_vastus_lat: { ua: "Латеральний широкий м'яз", short: "Лат. широкий", en: "vastus lateralis", group: "muscles", sub: "thigh_ant" },
+  m_vastus_med: { ua: "Медіальний широкий м'яз", short: "Мед. широкий", en: "vastus medialis", group: "muscles", sub: "thigh_ant" },
+  m_vastus_int: { ua: "Проміжний широкий м'яз", short: "Пром. широкий", en: "vastus intermedius", group: "muscles", sub: "thigh_ant" },
+  // М'язи стегна — задня група
+  m_biceps_fem: { ua: "Двоголовий м'яз стегна", short: "Двоголовий", en: "biceps femoris", group: "muscles", sub: "thigh_post" },
+  m_semitend: { ua: "Напівсухожилковий м'яз", short: "Напівсухожилк.", en: "semitendinosus", group: "muscles", sub: "thigh_post" },
+  m_semimemb: { ua: "Напівперетинчастий м'яз", short: "Напівперетинч.", en: "semimembranosus", group: "muscles", sub: "thigh_post" },
+  // М'язи стегна — медіальна група
+  m_adductor_long: { ua: "Довгий привідний м'яз", short: "Довгий прив.", en: "adductor longus", group: "muscles", sub: "thigh_med" },
+  m_adductor_mag: { ua: "Великий привідний м'яз", short: "Великий прив.", en: "adductor magnus", group: "muscles", sub: "thigh_med" },
+  m_gracilis: { ua: "Тонкий м'яз", short: "Тонкий", en: "gracilis", group: "muscles", sub: "thigh_med" },
+  m_pectineus: { ua: "Гребінчастий м'яз", short: "Гребінчастий", en: "pectineus", group: "muscles", sub: "thigh_med" },
+  // М'язи гомілки — задня група
+  m_gastroc: { ua: "Литковий м'яз", short: "Литковий", en: "gastrocnemius", group: "muscles", sub: "calf_post" },
+  m_soleus: { ua: "Камбалоподібний м'яз", short: "Камбалопод.", en: "soleus", group: "muscles", sub: "calf_post" },
+  m_tib_post: { ua: "Задній великогомілковий м'яз", short: "Задній в/гом.", en: "tibialis posterior", group: "muscles", sub: "calf_post" },
+  m_flex_dig: { ua: "Довгий згинач пальців", short: "Згинач пальців", en: "flexor digitorum longus", group: "muscles", sub: "calf_post" },
+  // М'язи гомілки — передня/латеральна
+  m_tib_ant: { ua: "Передній великогомілковий м'яз", short: "Передній в/гом.", en: "tibialis anterior", group: "muscles", sub: "calf_ant" },
+  m_ext_dig: { ua: "Довгий розгинач пальців", short: "Розгинач пальців", en: "extensor digitorum longus", group: "muscles", sub: "calf_ant" },
+  m_peroneus: { ua: "Малогомілкові м'язи", short: "Малогомілкові", en: "peroneus", group: "muscles", sub: "calf_lat" },
+  // М'язи плеча
+  m_biceps_br: { ua: "Двоголовий м'яз плеча", short: "Двоголовий", en: "biceps brachii", group: "muscles", sub: "arm" },
+  m_brachialis: { ua: "Плечовий м'яз", short: "Плечовий", en: "brachialis", group: "muscles", sub: "arm" },
+  m_triceps: { ua: "Триголовий м'яз плеча", short: "Триголовий", en: "triceps brachii", group: "muscles", sub: "arm" },
+  // Ротаторна манжета
+  m_supraspin: { ua: "Надостьовий м'яз", short: "Надостьовий", en: "supraspinatus", group: "muscles", sub: "rotator" },
+  m_infraspin: { ua: "Підостьовий м'яз", short: "Підостьовий", en: "infraspinatus", group: "muscles", sub: "rotator" },
+  m_teres_min: { ua: "Малий круглий м'яз", short: "Малий круглий", en: "teres minor", group: "muscles", sub: "rotator" },
+  m_subscap: { ua: "Підлопатковий м'яз", short: "Підлопатковий", en: "subscapularis", group: "muscles", sub: "rotator" },
+
+  // Зв'язки коліна
+  l_acl: { ua: "Передня хрестоподібна зв'язка", short: "ПХЗ", en: "anterior cruciate ligament", group: "ligaments", sub: "knee_lig" },
+  l_pcl: { ua: "Задня хрестоподібна зв'язка", short: "ЗХЗ", en: "posterior cruciate ligament", group: "ligaments", sub: "knee_lig" },
+  l_mcl: { ua: "Медіальна колатеральна зв'язка", short: "МКЗ", en: "medial collateral ligament", group: "ligaments", sub: "knee_lig" },
+  l_lcl: { ua: "Латеральна колатеральна зв'язка", short: "ЛКЗ", en: "lateral collateral ligament", group: "ligaments", sub: "knee_lig" },
+  l_patellar: { ua: "Зв'язка наколінка", short: "Наколінок", en: "patellar ligament", group: "ligaments", sub: "knee_lig" },
+  // Зв'язки/сухожилля гомілковостопу
+  l_achilles: { ua: "Ахіллове сухожилля", short: "Ахілл", en: "achilles tendon", group: "ligaments", sub: "ankle_lig" },
+  l_deltoid: { ua: "Дельтоподібна зв'язка", short: "Дельтоподібна", en: "deltoid ligament", group: "ligaments", sub: "ankle_lig" },
+  l_atfl: { ua: "Передня таранно-малогомілкова зв'язка", short: "ПТМЗ", en: "anterior talofibular ligament", group: "ligaments", sub: "ankle_lig" },
+  l_cfl: { ua: "П'ятково-малогомілкова зв'язка", short: "ПМЗ", en: "calcaneofibular ligament", group: "ligaments", sub: "ankle_lig" },
+};
+
+const SUBGROUPS = {
+  thigh_ant: "Стегно — передня група",
+  thigh_post: "Стегно — задня група",
+  thigh_med: "Стегно — медіальна група",
+  calf_post: "Гомілка — задня група",
+  calf_ant: "Гомілка — передня група",
+  calf_lat: "Гомілка — латеральна група",
+  arm: "Плече",
+  rotator: "Ротаторна манжета",
+  knee_lig: "Зв'язки коліна",
+  ankle_lig: "Зв'язки/сухожилля гомілковостопу",
 };
 
 const ZONE_GROUPS = {
-  joints: { label: "Суглоби", icon: "🦴" },
-  spine: { label: "Хребет", icon: "🔩" },
-  head: { label: "Голова", icon: "🧠" },
-  muscles: { label: "М'язи", icon: "💪" },
+  joints: { label: "Суглоби", icon: "ti-bone" },
+  spine: { label: "Хребет", icon: "ti-spine" },
+  head: { label: "Голова", icon: "ti-brain" },
+  muscles: { label: "М'язи", icon: "ti-stretching" },
+  ligaments: { label: "Зв'язки та сухожилля", icon: "ti-link" },
 };
 
 const SEQUENCES = ["T1", "T2", "STIR", "PD", "PD Fat Sat"];
@@ -257,7 +313,7 @@ function RadioScreen({ setScr }) {
           const terms = gk === "joints" ? QUICK_TERMS.slice(0, 12) : gk === "spine" ? QUICK_TERMS.slice(12, 17) : gk === "head" ? QUICK_TERMS.slice(17, 20) : QUICK_TERMS.slice(20);
           if (terms.length === 0) return null;
           return <div key={gk} style={{ marginBottom: 10 }}>
-            <p style={{ fontSize: 10, fontWeight: 600, color: "#475569", marginBottom: 4, textTransform: "uppercase" }}>{gv.icon} {gv.label}</p>
+            <p style={{ fontSize: 10, fontWeight: 600, color: "#475569", marginBottom: 4, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 5 }}><i className={`ti ${gv.icon}`} style={{ fontSize: 12 }} aria-hidden="true" /> {gv.label}</p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
               {terms.map((t, i) => <a key={i} href={`https://radiopaedia.org/search?q=${encodeURIComponent(t.en)}&scope=all`} target="_blank" rel="noopener noreferrer"
                 style={{ fontSize: 11, color: "#10b981", background: "rgba(16,185,129,.08)", border: "1px solid rgba(16,185,129,.15)", borderRadius: 7, padding: "5px 10px", textDecoration: "none", display: "flex", alignItems: "center", gap: 3 }}>
@@ -291,6 +347,7 @@ export default function MRIInsight() {
   const [kb, setKb] = useState({}); // {zone: [{id, title, text}]}
   const [libTab, setLibTab] = useState("refs"); // "refs" | "atlas" | "kb"
   const [selZone, setSelZone] = useState("knee");
+  const [expandedSubs, setExpandedSubs] = useState({}); // {subKey: bool} for collapsible muscle/ligament submenus
   const [studies, setStudies] = useState([]);
   const [study, setStudy] = useState(null);
   const [prog, setProg] = useState(null);
@@ -1004,49 +1061,115 @@ export default function MRIInsight() {
 
   // ═══════════ SCREENS ═══════════
 
+  // Tabler icon helper
+  const TI = ({ name, size = 14, color }) => <i className={`ti ${name}`} style={{ fontSize: size, color, lineHeight: 1 }} aria-hidden="true" />;
+
+  // Reusable grouped zone selector with collapsible submenus for muscles/ligaments
+  // renderZone(zoneKey, zoneObj) => JSX for a single zone button
+  const ZoneGroups = ({ renderZone, countFn }) => (
+    <>
+      {Object.entries(ZONE_GROUPS).map(([gk, gv]) => {
+        const zonesInGroup = Object.entries(ZONES).filter(([_, z]) => z.group === gk);
+        const hasSubs = zonesInGroup.some(([_, z]) => z.sub);
+
+        if (!hasSubs) {
+          return (
+            <div key={gk} style={{ marginBottom: 10 }}>
+              <p style={P.grpLabel}><TI name={gv.icon} size={13} color="#8b919c" /> {gv.label}</p>
+              <div style={P.ztRow}>{zonesInGroup.map(([k, v]) => renderZone(k, v))}</div>
+            </div>
+          );
+        }
+
+        // Group with subdivisions — render collapsible submenus
+        const subsMap = {};
+        zonesInGroup.forEach(([k, v]) => { (subsMap[v.sub] = subsMap[v.sub] || []).push([k, v]); });
+        return (
+          <div key={gk} style={{ marginBottom: 10 }}>
+            <p style={P.grpLabel}><TI name={gv.icon} size={13} color="#8b919c" /> {gv.label}</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {Object.entries(subsMap).map(([subKey, subZones]) => {
+                const open = expandedSubs[subKey];
+                const subCount = countFn ? subZones.reduce((s, [k]) => s + countFn(k), 0) : 0;
+                return (
+                  <div key={subKey} style={{ background: "#0f1217", border: "0.5px solid rgba(255,255,255,.05)", borderRadius: 6, overflow: "hidden" }}>
+                    <div onClick={() => setExpandedSubs(p => ({ ...p, [subKey]: !p[subKey] }))}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 10px", cursor: "pointer" }}>
+                      <span style={{ fontSize: 11, color: "#c4c9d0", fontWeight: 500 }}>{SUBGROUPS[subKey]}</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        {subCount > 0 && <span style={P.ztB}>{subCount}</span>}
+                        <TI name={open ? "ti-chevron-down" : "ti-chevron-right"} size={14} color="#5f6672" />
+                      </span>
+                    </div>
+                    {open && <div style={{ ...P.ztRow, padding: "0 10px 8px" }}>{subZones.map(([k, v]) => renderZone(k, v))}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+
+
   const Dash = () => (
     <div style={P.pg}>
       <div style={P.hdr}>
-        <div><h1 style={P.logo}><Brain size={24} style={{ color: "#06b6d4", marginRight: 8 }} />MRI Insight</h1>
-          <p style={P.sub}>Аналіз МРТ · порівняння з нормою</p></div>
-        <button onClick={() => setShowSet(true)} style={P.iBtn}><Settings size={20} /></button>
+        <div style={P.logo}>
+          <span style={{ width: 30, height: 30, borderRadius: 6, background: "#15324a", display: "flex", alignItems: "center", justifyContent: "center" }}><Brain size={19} style={{ color: "#4aa3df" }} /></span>
+          <div><div style={{ fontSize: 15, fontWeight: 500, color: "#e8eaed" }}>MRI Insight</div><p style={P.sub}>RADIOLOGY WORKSTATION</p></div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 11, color: "#4aa3df", background: "#15324a", padding: "4px 10px", borderRadius: 4, fontFamily: "'JetBrains Mono',monospace" }}>{aiModel === "gemini-2.5-pro" ? "GEMINI 2.5 PRO" : "GEMINI 2.5 FLASH"}</span>
+          <button onClick={() => setShowSet(true)} style={P.iBtn}><Settings size={18} /></button>
+        </div>
       </div>
-      {!apiKey && <div style={P.warn}><AlertCircle size={16} style={{ color: "#f59e0b", flexShrink: 0 }} /><div><p style={{ fontSize: 13, fontWeight: 600, color: "#f59e0b" }}>API ключ не налаштовано</p><p style={P.ws}>⚙ → Налаштування</p></div></div>}
+      <div style={P.body}>
+      {!apiKey && <div style={{ ...P.warn, margin: "0 0 14px" }}><AlertCircle size={16} style={{ color: "#e0a93b", flexShrink: 0 }} /><div><p style={{ fontSize: 13, fontWeight: 500, color: "#e0a93b" }}>API ключ не налаштовано</p><p style={P.ws}>Налаштування → введіть ключ</p></div></div>}
       <div style={P.g3}>
-        <button onClick={newStudy} style={P.act}><div style={P.aIc}><Plus size={24} /></div><span style={P.aLb}>Нове дослідження</span></button>
-        <button onClick={() => setScr("lib")} style={P.act}><div style={{ ...P.aIc, background: "rgba(139,92,246,.14)", color: "#a78bfa" }}><BookOpen size={24} /></div><span style={P.aLb}>Бібліотека норми</span></button>
-        <button onClick={() => setScr("radio")} style={P.act}><div style={{ ...P.aIc, background: "rgba(16,185,129,.14)", color: "#10b981" }}><ExternalLink size={24} /></div><span style={P.aLb}>Radiopaedia</span></button>
+        <button onClick={newStudy} style={P.act}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Plus size={18} style={{ color: "#4aa3df" }} /><span style={P.aLb}>Нове дослідження</span></div><span style={{ fontSize: 11, color: "#5f6672" }}>Завантажити серії пацієнта</span></button>
+        <button onClick={() => setScr("lib")} style={P.act}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><BookOpen size={18} style={{ color: "#9b8cdb" }} /><span style={P.aLb}>Бібліотека</span></div><span style={{ fontSize: 11, color: "#5f6672" }}>Норми · атлас · база знань</span></button>
+        <button onClick={() => setScr("radio")} style={P.act}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><ExternalLink size={18} style={{ color: "#4ec99b" }} /><span style={P.aLb}>Radiopaedia</span></div><span style={{ fontSize: 11, color: "#5f6672" }}>Довідник патологій</span></button>
       </div>
-      <div style={P.chips}>{Object.entries(ZONE_GROUPS).map(([gk, gv]) => <div key={gk} style={P.chipGroup}><span style={P.chipGLabel}>{gv.icon} {gv.label}</span><div style={P.chipRow}>{Object.entries(ZONES).filter(([_, z]) => z.group === gk).map(([k, v]) => <div key={k} style={P.chip}><span style={P.chN}>{v.short}</span><span style={P.chC}>{(refs[k] || []).length}</span></div>)}</div></div>)}</div>
+      <div style={P.chips}><ZoneGroups countFn={(k) => (refs[k] || []).length} renderZone={(k, v) => {
+        const c = (refs[k] || []).length;
+        return <div key={k} style={P.chip}><span style={P.chN}>{v.short}</span><span style={P.chC}>{c}</span></div>;
+      }} /></div>
       {studies.length > 0 && <div>
+        <p style={P.secT}>Останні дослідження</p>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-          <button onClick={() => setShowArchive(false)} style={{ ...P.sm, padding: "6px 14px", fontSize: 12, background: !showArchive ? "rgba(6,182,212,.14)" : "rgba(255,255,255,.04)", color: !showArchive ? "#06b6d4" : "#64748b", border: !showArchive ? "1px solid rgba(6,182,212,.3)" : "1px solid rgba(255,255,255,.07)" }}>Активні ({studies.filter(s => !s.archived).length})</button>
-          <button onClick={() => setShowArchive(true)} style={{ ...P.sm, padding: "6px 14px", fontSize: 12, background: showArchive ? "rgba(139,92,246,.14)" : "rgba(255,255,255,.04)", color: showArchive ? "#a78bfa" : "#64748b", border: showArchive ? "1px solid rgba(139,92,246,.3)" : "1px solid rgba(255,255,255,.07)" }}>Архів ({studies.filter(s => s.archived).length})</button>
+          <button onClick={() => setShowArchive(false)} style={{ ...P.sm, padding: "6px 14px", fontSize: 12, background: !showArchive ? "#15324a" : "#1a1d24", color: !showArchive ? "#4aa3df" : "#8b919c", border: !showArchive ? "0.5px solid rgba(74,163,223,.4)" : "0.5px solid rgba(255,255,255,.08)" }}>Активні ({studies.filter(s => !s.archived).length})</button>
+          <button onClick={() => setShowArchive(true)} style={{ ...P.sm, padding: "6px 14px", fontSize: 12, background: showArchive ? "rgba(155,140,219,.14)" : "#1a1d24", color: showArchive ? "#9b8cdb" : "#8b919c", border: showArchive ? "0.5px solid rgba(155,140,219,.4)" : "0.5px solid rgba(255,255,255,.08)" }}>Архів ({studies.filter(s => s.archived).length})</button>
         </div>
         {studies.filter(s => showArchive ? s.archived : !s.archived).map(s => (
           <div key={s.id} style={{ ...P.sCard, cursor: "pointer" }}>
-            <div onClick={() => loadStudy(s.id)} style={{ flex: 1 }}>
-              <p style={P.sN}>{s.pn || "Без імені"}</p>
-              <p style={P.sM}>{ZONES[s.z]?.ua} · {s.ic} зрізів · {s.d}</p>
+            <div onClick={() => loadStudy(s.id)} style={{ flex: 1, display: "flex", alignItems: "center", gap: 12 }}>
+              <i className="ti ti-photo" style={{ fontSize: 18, color: "#5f6672" }} aria-hidden="true" />
+              <div>
+                <p style={P.sN}>{s.pn || "Без імені"}</p>
+                <p style={P.sM}>{ZONES[s.z]?.ua} · {s.ic} зрізів · {s.d}</p>
+              </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              {s.fc > 0 ? <span style={{ fontSize: 11, fontWeight: 600, background: "rgba(239,68,68,.12)", color: "#ef4444", padding: "2px 8px", borderRadius: 6 }}>{s.fc} знахідок</span> : <span style={{ fontSize: 11, fontWeight: 600, background: "rgba(16,185,129,.12)", color: "#10b981", padding: "2px 8px", borderRadius: 6 }}>Норма</span>}
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {s.fc > 0 ? <span style={P.bdLg}>{s.fc} ЗНАХІДОК</span> : <span style={P.bdOk}>НОРМА</span>}
               {showArchive ? (
                 <>
-                  <button onClick={(e) => { e.stopPropagation(); unarchiveStudy(s.id); }} title="Відновити" style={{ ...P.sm, color: "#a78bfa", padding: 4 }}><RotateCcw size={13} /></button>
-                  <button onClick={(e) => { e.stopPropagation(); if (confirm("Видалити назавжди?")) deleteStudy(s.id); }} title="Видалити" style={{ ...P.sm, color: "#ef4444", padding: 4 }}><Trash2 size={13} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); unarchiveStudy(s.id); }} title="Відновити" style={{ ...P.sm, color: "#9b8cdb", padding: 4 }}><RotateCcw size={13} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); if (confirm("Видалити назавжди?")) deleteStudy(s.id); }} title="Видалити" style={{ ...P.sm, color: "#e24b4a", padding: 4 }}><Trash2 size={13} /></button>
                 </>
               ) : (
-                <button onClick={(e) => { e.stopPropagation(); archiveStudy(s.id); }} title="В архів" style={{ ...P.sm, color: "#64748b", padding: 4 }}><Archive size={13} /></button>
+                <button onClick={(e) => { e.stopPropagation(); archiveStudy(s.id); }} title="В архів" style={{ ...P.sm, color: "#8b919c", padding: 4 }}><Archive size={13} /></button>
               )}
-              <ChevronRight size={14} style={{ color: "#475569" }} />
+              <ChevronRight size={14} style={{ color: "#5f6672" }} />
             </div>
           </div>
         ))}
         {studies.filter(s => showArchive ? s.archived : !s.archived).length === 0 && (
-          <p style={{ fontSize: 13, color: "#475569", textAlign: "center", padding: "16px 0" }}>{showArchive ? "Архів порожній" : "Немає активних досліджень"}</p>
+          <p style={{ fontSize: 13, color: "#5f6672", textAlign: "center", padding: "16px 0" }}>{showArchive ? "Архів порожній" : "Немає активних досліджень"}</p>
         )}
       </div>}
+      </div>
     </div>
   );
 
@@ -1059,21 +1182,21 @@ export default function MRIInsight() {
 
         {/* Library tabs */}
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-          <button onClick={() => setLibTab("refs")} style={{ ...P.sm, padding: "8px 16px", fontSize: 12, background: libTab === "refs" ? "rgba(6,182,212,.14)" : "rgba(255,255,255,.04)", color: libTab === "refs" ? "#06b6d4" : "#64748b", border: libTab === "refs" ? "1px solid rgba(6,182,212,.3)" : "1px solid rgba(255,255,255,.07)" }}>
+          <button onClick={() => setLibTab("refs")} style={{ ...P.sm, padding: "8px 16px", fontSize: 12, background: libTab === "refs" ? "#15324a" : "#1a1d24", color: libTab === "refs" ? "#4aa3df" : "#8b919c", border: libTab === "refs" ? "0.5px solid rgba(74,163,223,.4)" : "0.5px solid rgba(255,255,255,.08)" }}>
             <BookOpen size={14} style={{ marginRight: 4 }} /> Референси норми
           </button>
-          <button onClick={() => setLibTab("atlas")} style={{ ...P.sm, padding: "8px 16px", fontSize: 12, background: libTab === "atlas" ? "rgba(139,92,246,.14)" : "rgba(255,255,255,.04)", color: libTab === "atlas" ? "#a78bfa" : "#64748b", border: libTab === "atlas" ? "1px solid rgba(139,92,246,.3)" : "1px solid rgba(255,255,255,.07)" }}>
-            📖 Анатомічний атлас ({Object.values(atlas).reduce((s, a) => s + a.length, 0)})
+          <button onClick={() => setLibTab("atlas")} style={{ ...P.sm, padding: "8px 16px", fontSize: 12, background: libTab === "atlas" ? "rgba(155,140,219,.14)" : "#1a1d24", color: libTab === "atlas" ? "#9b8cdb" : "#8b919c", border: libTab === "atlas" ? "0.5px solid rgba(155,140,219,.4)" : "0.5px solid rgba(255,255,255,.08)" }}>
+            <i className="ti ti-book-2" style={{ fontSize: 14, marginRight: 4 }} aria-hidden="true" /> Анатомічний атлас ({Object.values(atlas).reduce((s, a) => s + a.length, 0)})
           </button>
-          <button onClick={() => setLibTab("kb")} style={{ ...P.sm, padding: "8px 16px", fontSize: 12, background: libTab === "kb" ? "rgba(245,158,11,.14)" : "rgba(255,255,255,.04)", color: libTab === "kb" ? "#f59e0b" : "#64748b", border: libTab === "kb" ? "1px solid rgba(245,158,11,.3)" : "1px solid rgba(255,255,255,.07)" }}>
-            📝 База знань ({Object.values(kb).reduce((s, a) => s + a.length, 0)})
+          <button onClick={() => setLibTab("kb")} style={{ ...P.sm, padding: "8px 16px", fontSize: 12, background: libTab === "kb" ? "rgba(224,169,59,.14)" : "#1a1d24", color: libTab === "kb" ? "#e0a93b" : "#8b919c", border: libTab === "kb" ? "0.5px solid rgba(224,169,59,.4)" : "0.5px solid rgba(255,255,255,.08)" }}>
+            <i className="ti ti-file-text" style={{ fontSize: 14, marginRight: 4 }} aria-hidden="true" /> База знань ({Object.values(kb).reduce((s, a) => s + a.length, 0)})
           </button>
         </div>
 
-        <div style={P.ztabs}>{Object.entries(ZONE_GROUPS).map(([gk, gv]) => <div key={gk} style={P.ztGroup}><span style={P.ztGLabel}>{gv.icon} {gv.label}</span><div style={P.ztRow}>{Object.entries(ZONES).filter(([_, z]) => z.group === gk).map(([k, v]) => {
+        <div style={P.ztabs}><ZoneGroups countFn={(k) => libTab === "refs" ? (refs[k] || []).length : libTab === "atlas" ? (atlas[k] || []).length : (kb[k] || []).length} renderZone={(k, v) => {
           const cnt = libTab === "refs" ? (refs[k] || []).length : libTab === "atlas" ? (atlas[k] || []).length : (kb[k] || []).length;
           return <button key={k} onClick={() => setSelZone(k)} style={selZone === k ? P.ztOn : P.zt}>{v.short}{cnt > 0 && <span style={P.ztB}>{cnt}</span>}</button>;
-        })}</div></div>)}</div>
+        }} /></div>
 
         {libTab === "refs" ? (<>
           {/* REFS TAB */}
@@ -1215,7 +1338,11 @@ export default function MRIInsight() {
         <input value={study?.mechanism || ""} onChange={e => setStudy(p => ({ ...p, mechanism: e.target.value }))} placeholder="Механізм травми / анамнез" style={P.inp} />
 
         <label style={P.lb}>Зона дослідження</label>
-        {Object.entries(ZONE_GROUPS).map(([gk, gv]) => <div key={gk} style={{ marginBottom: 8 }}><p style={P.grpLabel}>{gv.icon} {gv.label}</p><div style={P.g2}>{Object.entries(ZONES).filter(([_, z]) => z.group === gk).map(([k, v]) => <button key={k} onClick={() => setStudy(p => ({ ...p, zone: k }))} style={study?.zone === k ? P.selOn : P.sel}>{v.short}{(refs[k] || []).length > 0 && <span style={{ display: "block", fontSize: 10, color: "#475569", marginTop: 1 }}>{(refs[k] || []).length} реф.</span>}</button>)}</div></div>)}
+        <ZoneGroups countFn={(k) => (refs[k] || []).length} renderZone={(k, v) => (
+          <button key={k} onClick={() => setStudy(p => ({ ...p, zone: k }))} style={study?.zone === k ? P.selOn : P.sel}>
+            {v.short}{(refs[k] || []).length > 0 && <span style={{ marginLeft: 5, fontSize: 9, color: "#4aa3df", fontFamily: "'JetBrains Mono',monospace" }}>{(refs[k] || []).length}</span>}
+          </button>
+        )} />
 
         {zr.length === 0 && <div style={{ ...P.warn, marginTop: 6 }}><AlertCircle size={14} style={{ color: "#f59e0b", flexShrink: 0 }} /><p style={P.ws}>Немає референсів. <span onClick={() => { setSelZone(study.zone); setScr("lib"); }} style={{ color: "#06b6d4", cursor: "pointer", textDecoration: "underline" }}>Завантажити</span></p></div>}
         {zr.length > 0 && <div style={P.refBx}>
@@ -1681,99 +1808,101 @@ export default function MRIInsight() {
 
 // ═══════════ STYLES ═══════════
 const P = {
-  app: { fontFamily: "'IBM Plex Sans',sans-serif", background: "#070b14", minHeight: "100vh", color: "#e2e8f0" },
-  pg: { margin: "0 auto", padding: "12px 24px 72px" },
-  hdr: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0 20px" },
-  logo: { fontSize: 22, fontWeight: 700, display: "flex", alignItems: "center", letterSpacing: "-.3px", color: "#f1f5f9" },
-  sub: { fontSize: 10, color: "#475569", marginTop: 1, fontFamily: "'JetBrains Mono',monospace" },
-  iBtn: { background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 10, padding: 8, color: "#94a3b8", cursor: "pointer" },
-  warn: { display: "flex", alignItems: "center", gap: 8, background: "rgba(245,158,11,.08)", border: "1px solid rgba(245,158,11,.18)", borderRadius: 10, padding: "10px 12px", marginBottom: 14 },
-  ws: { fontSize: 11, color: "#94a3b8", marginTop: 1 },
-  g2: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 7, marginBottom: 12 },
-  g3: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 7, marginBottom: 12 },
-  act: { background: "linear-gradient(135deg,#111827,#0f172a)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 13, padding: "20px 12px", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: "pointer" },
-  aIc: { width: 48, height: 48, borderRadius: 12, background: "rgba(6,182,212,.12)", color: "#06b6d4", display: "flex", alignItems: "center", justifyContent: "center" },
-  aLb: { fontSize: 12, fontWeight: 600, color: "#cbd5e1", textAlign: "center" },
-  chips: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 },
+  app: { fontFamily: "'IBM Plex Sans',sans-serif", background: "#0c0e12", minHeight: "100vh", color: "#e8eaed" },
+  pg: { margin: "0 auto", padding: "0 18px 72px" },
+  hdr: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", background: "#11141a", borderBottom: "1px solid rgba(255,255,255,.08)", marginBottom: 16, marginLeft: -18, marginRight: -18 },
+  logo: { fontSize: 17, fontWeight: 600, display: "flex", alignItems: "center", gap: 10, letterSpacing: ".2px", color: "#e8eaed" },
+  sub: { fontSize: 10, color: "#5f6672", marginTop: 1, fontFamily: "'JetBrains Mono',monospace", letterSpacing: ".5px" },
+  iBtn: { background: "#1a1d24", border: "0.5px solid rgba(255,255,255,.08)", borderRadius: 6, padding: 8, color: "#8b919c", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" },
+  warn: { display: "flex", alignItems: "center", gap: 8, background: "rgba(224,169,59,.08)", border: "1px solid rgba(224,169,59,.18)", borderRadius: 6, padding: "10px 12px", marginBottom: 14, margin: "0 18px 14px" },
+  ws: { fontSize: 11, color: "#8b919c", marginTop: 1 },
+  body: { },
+  g2: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, marginBottom: 12 },
+  g3: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 },
+  act: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.07)", borderRadius: 8, padding: "14px", display: "flex", flexDirection: "column", gap: 6, cursor: "pointer", alignItems: "flex-start" },
+  aIc: { width: 36, height: 36, borderRadius: 6, background: "#15324a", color: "#4aa3df", display: "flex", alignItems: "center", justifyContent: "center" },
+  aLb: { fontSize: 13, fontWeight: 500, color: "#e8eaed" },
+  chips: { display: "flex", flexDirection: "column", gap: 12, marginBottom: 18 },
   chipGroup: { },
-  chipGLabel: { fontSize: 10, fontWeight: 600, color: "#475569", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: ".3px" },
-  chipRow: { display: "flex", flexWrap: "wrap", gap: 4 },
-  chip: { background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 16, padding: "3px 9px", fontSize: 10, display: "flex", alignItems: "center", gap: 4 },
-  chN: { color: "#64748b" }, chC: { color: "#06b6d4", fontFamily: "'JetBrains Mono',monospace", fontWeight: 600 },
-  secT: { fontSize: 14, fontWeight: 600, color: "#94a3b8", marginBottom: 8 },
-  sCard: { display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 10, padding: "10px 12px", marginBottom: 5 },
-  sN: { fontSize: 13, fontWeight: 600, color: "#e2e8f0" }, sM: { fontSize: 11, color: "#64748b", marginTop: 1 },
-  top: { display: "flex", alignItems: "center", gap: 8, padding: "12px 0 14px" },
-  bk: { background: "none", border: "none", color: "#06b6d4", display: "flex", alignItems: "center", gap: 2, fontSize: 12, cursor: "pointer", padding: 0 },
-  pT: { fontSize: 17, fontWeight: 700, color: "#f1f5f9" },
-  ztabs: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 },
+  chipGLabel: { fontSize: 11, fontWeight: 500, color: "#8b919c", marginBottom: 6, display: "flex", alignItems: "center", gap: 6, textTransform: "uppercase", letterSpacing: ".5px", fontFamily: "'JetBrains Mono',monospace" },
+  chipRow: { display: "flex", flexWrap: "wrap", gap: 6 },
+  chip: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.07)", borderRadius: 6, padding: "5px 10px", fontSize: 11, display: "flex", alignItems: "center", gap: 6 },
+  chN: { color: "#8b919c" }, chC: { color: "#4aa3df", fontFamily: "'JetBrains Mono',monospace", fontWeight: 500 },
+  secT: { fontSize: 11, fontWeight: 500, color: "#8b919c", marginBottom: 10, textTransform: "uppercase", letterSpacing: ".5px", fontFamily: "'JetBrains Mono',monospace", display: "flex", alignItems: "center", gap: 8 },
+  sCard: { display: "flex", justifyContent: "space-between", alignItems: "center", background: "#13161c", border: "0.5px solid rgba(255,255,255,.07)", borderRadius: 6, padding: "11px 14px", marginBottom: 6 },
+  sN: { fontSize: 13, fontWeight: 500, color: "#e8eaed" }, sM: { fontSize: 11, color: "#5f6672", marginTop: 2, fontFamily: "'JetBrains Mono',monospace" },
+  top: { display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", background: "#11141a", borderBottom: "1px solid rgba(255,255,255,.08)", marginBottom: 16, marginLeft: -18, marginRight: -18 },
+  bk: { background: "none", border: "none", color: "#4aa3df", display: "flex", alignItems: "center", gap: 3, fontSize: 12, cursor: "pointer", padding: 0 },
+  pT: { fontSize: 15, fontWeight: 500, color: "#e8eaed" },
+  ztabs: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 },
   ztGroup: { },
-  ztGLabel: { fontSize: 10, fontWeight: 600, color: "#475569", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: ".3px" },
-  ztRow: { display: "flex", flexWrap: "wrap", gap: 4 },
-  zt: { background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 8, padding: "5px 10px", fontSize: 11, color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 },
-  ztOn: { background: "rgba(6,182,212,.11)", border: "1px solid rgba(6,182,212,.28)", borderRadius: 8, padding: "5px 10px", fontSize: 11, color: "#06b6d4", cursor: "pointer", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 },
-  ztB: { fontSize: 9, background: "rgba(6,182,212,.18)", color: "#06b6d4", padding: "0 4px", borderRadius: 4, fontWeight: 600 },
-  upRow: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 7, marginBottom: 12 },
-  upC: { background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 11, padding: "16px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer" },
-  upL: { fontSize: 11, fontWeight: 600, color: "#94a3b8" },
+  ztGLabel: { fontSize: 11, fontWeight: 500, color: "#8b919c", marginBottom: 6, display: "flex", alignItems: "center", gap: 6, textTransform: "uppercase", letterSpacing: ".5px", fontFamily: "'JetBrains Mono',monospace" },
+  ztRow: { display: "flex", flexWrap: "wrap", gap: 5 },
+  zt: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.07)", borderRadius: 6, padding: "5px 10px", fontSize: 11, color: "#8b919c", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 },
+  ztOn: { background: "#15324a", border: "0.5px solid rgba(74,163,223,.4)", borderRadius: 6, padding: "5px 10px", fontSize: 11, color: "#4aa3df", cursor: "pointer", fontWeight: 500, display: "flex", alignItems: "center", gap: 4 },
+  ztB: { fontSize: 9, background: "rgba(74,163,223,.2)", color: "#4aa3df", padding: "0 4px", borderRadius: 3, fontWeight: 500, fontFamily: "'JetBrains Mono',monospace" },
+  subLabel: { fontSize: 10, color: "#5f6672", marginBottom: 3, marginTop: 6, fontFamily: "'JetBrains Mono',monospace", letterSpacing: ".3px" },
+  upRow: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 8, marginBottom: 12 },
+  upC: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.07)", borderRadius: 8, padding: "16px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer" },
+  upL: { fontSize: 11, fontWeight: 500, color: "#8b919c" },
   iGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(90px,1fr))", gap: 5, marginBottom: 12 },
   thBox: { position: "relative", aspectRatio: "1", borderRadius: 6, overflow: "hidden" },
-  th: { width: "100%", height: "100%", objectFit: "cover", cursor: "pointer", display: "block", borderRadius: 6, border: "1px solid rgba(255,255,255,.06)" },
-  thDel: { position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,.7)", border: "none", borderRadius: 4, padding: 2, color: "#ef4444", cursor: "pointer" },
-  thIdx: { position: "absolute", bottom: 2, left: 2, background: "rgba(0,0,0,.7)", color: "#94a3b8", fontSize: 8, padding: "1px 3px", borderRadius: 3, fontFamily: "'JetBrains Mono',monospace" },
-  thPg: { position: "absolute", top: 2, left: 2, background: "rgba(139,92,246,.75)", color: "#fff", fontSize: 7, padding: "1px 3px", borderRadius: 3 },
-  thClip: { position: "absolute", top: 2, left: 2, fontSize: 9, background: "rgba(16,185,129,.75)", borderRadius: 3, padding: "0 2px" },
-  thCap: { position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,.8)", color: "#e2e8f0", fontSize: 7, padding: "2px 3px", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  vDot: { position: "absolute", top: 2, right: 2, background: "rgba(6,182,212,.8)", borderRadius: "50%", width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" },
-  lb: { display: "block", fontSize: 10, fontWeight: 600, color: "#64748b", marginBottom: 5, marginTop: 12, textTransform: "uppercase", letterSpacing: ".4px" },
-  inp: { width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 8, padding: "10px 11px", fontSize: 13, color: "#e2e8f0", outline: "none", fontFamily: "'IBM Plex Sans',sans-serif" },
-  ht: { fontSize: 10, color: "#475569", marginTop: 4 },
-  sel: { background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 8, padding: "8px 9px", fontSize: 11, color: "#94a3b8", cursor: "pointer", textAlign: "left" },
-  selOn: { background: "rgba(6,182,212,.09)", border: "1px solid rgba(6,182,212,.28)", borderRadius: 8, padding: "8px 9px", fontSize: 11, color: "#06b6d4", cursor: "pointer", fontWeight: 600, textAlign: "left" },
-  grpLabel: { fontSize: 10, fontWeight: 600, color: "#475569", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".3px" },
-  sq: { background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 6, padding: "6px 12px", fontSize: 11, color: "#94a3b8", cursor: "pointer", fontFamily: "'JetBrains Mono',monospace" },
-  sqOn: { background: "rgba(6,182,212,.11)", border: "1px solid rgba(6,182,212,.28)", borderRadius: 6, padding: "6px 12px", fontSize: 11, color: "#06b6d4", cursor: "pointer", fontWeight: 600, fontFamily: "'JetBrains Mono',monospace" },
-  drop: { border: "2px dashed rgba(255,255,255,.07)", borderRadius: 11, padding: "22px 12px", textAlign: "center", cursor: "pointer", marginBottom: 12 },
-  refBx: { background: "rgba(139,92,246,.06)", border: "1px solid rgba(139,92,246,.14)", borderRadius: 10, padding: 9, marginTop: 5, marginBottom: 3 },
-  lnk: { background: "none", border: "none", color: "#06b6d4", fontSize: 11, cursor: "pointer", textDecoration: "underline", padding: 0 },
-  mini: { width: 38, height: 38, objectFit: "cover", borderRadius: 4, border: "1px solid rgba(255,255,255,.08)", cursor: "pointer", flexShrink: 0 },
-  more: { width: 38, height: 38, borderRadius: 4, background: "rgba(255,255,255,.04)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#64748b", flexShrink: 0 },
-  anaBtn: { width: "100%", background: "linear-gradient(135deg,#0891b2,#06b6d4)", border: "none", borderRadius: 11, padding: 13, fontSize: 14, fontWeight: 700, color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: "0 4px 18px rgba(6,182,212,.25)", fontFamily: "'IBM Plex Sans',sans-serif" },
-  secBtn: { width: "100%", background: "rgba(139,92,246,.09)", border: "1px solid rgba(139,92,246,.22)", borderRadius: 11, padding: 11, fontSize: 13, fontWeight: 600, color: "#a78bfa", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: "'IBM Plex Sans',sans-serif", marginBottom: 7 },
-  spPan: { background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 10, padding: 8, textAlign: "center" },
-  spLb: { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".2px" },
-  spImg: { width: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: 8, cursor: "pointer", border: "1px solid rgba(255,255,255,.06)" },
-  spE: { height: 300, display: "flex", alignItems: "center", justifyContent: "center", color: "#334155", fontSize: 12, background: "rgba(255,255,255,.02)", borderRadius: 8 },
+  th: { width: "100%", height: "100%", objectFit: "cover", cursor: "pointer", display: "block", borderRadius: 6, border: "0.5px solid rgba(255,255,255,.08)" },
+  thDel: { position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,.75)", border: "none", borderRadius: 4, padding: 2, color: "#e24b4a", cursor: "pointer" },
+  thIdx: { position: "absolute", bottom: 2, left: 2, background: "rgba(0,0,0,.75)", color: "#8b919c", fontSize: 8, padding: "1px 4px", borderRadius: 3, fontFamily: "'JetBrains Mono',monospace" },
+  thPg: { position: "absolute", top: 2, left: 2, background: "rgba(155,140,219,.8)", color: "#fff", fontSize: 7, padding: "1px 3px", borderRadius: 3 },
+  thClip: { position: "absolute", top: 2, left: 2, fontSize: 9, background: "rgba(78,201,155,.8)", borderRadius: 3, padding: "0 2px" },
+  thCap: { position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,.82)", color: "#e8eaed", fontSize: 8, padding: "2px 3px", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  vDot: { position: "absolute", top: 2, right: 2, background: "rgba(74,163,223,.85)", borderRadius: "50%", width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" },
+  lb: { display: "block", fontSize: 10, fontWeight: 500, color: "#8b919c", marginBottom: 5, marginTop: 12, textTransform: "uppercase", letterSpacing: ".5px", fontFamily: "'JetBrains Mono',monospace" },
+  inp: { width: "100%", background: "#13161c", border: "0.5px solid rgba(255,255,255,.1)", borderRadius: 6, padding: "10px 11px", fontSize: 13, color: "#e8eaed", outline: "none", fontFamily: "'IBM Plex Sans',sans-serif" },
+  ht: { fontSize: 10, color: "#5f6672", marginTop: 4 },
+  sel: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.07)", borderRadius: 6, padding: "8px 9px", fontSize: 11, color: "#8b919c", cursor: "pointer", textAlign: "left" },
+  selOn: { background: "#15324a", border: "0.5px solid rgba(74,163,223,.4)", borderRadius: 6, padding: "8px 9px", fontSize: 11, color: "#4aa3df", cursor: "pointer", fontWeight: 500, textAlign: "left" },
+  grpLabel: { fontSize: 11, fontWeight: 500, color: "#8b919c", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".5px", fontFamily: "'JetBrains Mono',monospace", display: "flex", alignItems: "center", gap: 6 },
+  sq: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.07)", borderRadius: 5, padding: "6px 12px", fontSize: 11, color: "#8b919c", cursor: "pointer", fontFamily: "'JetBrains Mono',monospace" },
+  sqOn: { background: "#15324a", border: "0.5px solid rgba(74,163,223,.4)", borderRadius: 5, padding: "6px 12px", fontSize: 11, color: "#4aa3df", cursor: "pointer", fontWeight: 500, fontFamily: "'JetBrains Mono',monospace" },
+  drop: { border: "1px dashed rgba(255,255,255,.12)", borderRadius: 8, padding: "22px 12px", textAlign: "center", cursor: "pointer", marginBottom: 12, background: "#0f1217" },
+  refBx: { background: "#13161c", border: "0.5px solid rgba(155,140,219,.18)", borderRadius: 8, padding: 9, marginTop: 5, marginBottom: 3 },
+  lnk: { background: "none", border: "none", color: "#4aa3df", fontSize: 11, cursor: "pointer", textDecoration: "underline", padding: 0 },
+  mini: { width: 38, height: 38, objectFit: "cover", borderRadius: 4, border: "0.5px solid rgba(255,255,255,.08)", cursor: "pointer", flexShrink: 0 },
+  more: { width: 38, height: 38, borderRadius: 4, background: "#1a1d24", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#5f6672", flexShrink: 0 },
+  anaBtn: { width: "100%", background: "#1d6ea8", border: "none", borderRadius: 8, padding: 13, fontSize: 14, fontWeight: 500, color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontFamily: "'IBM Plex Sans',sans-serif" },
+  secBtn: { width: "100%", background: "#13161c", border: "0.5px solid rgba(155,140,219,.3)", borderRadius: 8, padding: 11, fontSize: 13, fontWeight: 500, color: "#9b8cdb", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: "'IBM Plex Sans',sans-serif", marginBottom: 7 },
+  spPan: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.07)", borderRadius: 8, padding: 8, textAlign: "center" },
+  spLb: { fontSize: 11, fontWeight: 500, color: "#8b919c", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".3px", fontFamily: "'JetBrains Mono',monospace" },
+  spImg: { width: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: 6, cursor: "pointer", border: "0.5px solid rgba(255,255,255,.06)" },
+  spE: { height: 300, display: "flex", alignItems: "center", justifyContent: "center", color: "#3a3f47", fontSize: 12, background: "#0f1217", borderRadius: 6 },
   spNav: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 4 },
-  nv: { background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 6, padding: "4px 8px", color: "#94a3b8", cursor: "pointer" },
+  nv: { background: "#1a1d24", border: "0.5px solid rgba(255,255,255,.08)", borderRadius: 5, padding: "4px 8px", color: "#8b919c", cursor: "pointer" },
   center: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "68vh", textAlign: "center" },
-  pulse: { width: 80, height: 80, borderRadius: "50%", background: "rgba(6,182,212,.07)", display: "flex", alignItems: "center", justifyContent: "center", animation: "pulse-ring 2s infinite", marginBottom: 18 },
-  prB: { width: "78%", maxWidth: 260, height: 4, background: "rgba(255,255,255,.06)", borderRadius: 2, overflow: "hidden", marginBottom: 8, marginLeft: "auto", marginRight: "auto" },
-  prF: { height: "100%", background: "linear-gradient(90deg,#06b6d4,#8b5cf6)", borderRadius: 2, transition: "width .4s" },
-  prT: { fontSize: 11, color: "#64748b", fontFamily: "'JetBrains Mono',monospace" },
-  resH: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 12, padding: "14px 12px", marginBottom: 8 },
-  bdLg: { fontSize: 12, fontWeight: 600, background: "rgba(239,68,68,.11)", color: "#ef4444", padding: "4px 10px", borderRadius: 8, whiteSpace: "nowrap" },
-  bdOk: { fontSize: 12, fontWeight: 600, background: "rgba(16,185,129,.11)", color: "#10b981", padding: "4px 10px", borderRadius: 8, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" },
-  rvBtn: { flex: 1, background: "rgba(139,92,246,.07)", border: "1px solid rgba(139,92,246,.18)", borderRadius: 9, padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, cursor: "pointer", color: "#a78bfa", fontSize: 12, fontWeight: 600, fontFamily: "'IBM Plex Sans',sans-serif" },
-  repBtn: { flex: 1, background: "rgba(6,182,212,.08)", border: "1px solid rgba(6,182,212,.2)", borderRadius: 9, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", color: "#06b6d4", fontSize: 12, fontWeight: 600, fontFamily: "'IBM Plex Sans',sans-serif" },
-  sumC: { background: "rgba(255,255,255,.03)", border: "1px solid rgba(139,92,246,.18)", borderRadius: 11, padding: 12, marginBottom: 8 },
-  sumT: { fontSize: 11, fontWeight: 600, color: "#a78bfa", textTransform: "uppercase", letterSpacing: ".3px", marginBottom: 5 },
-  sumTx: { fontSize: 12, lineHeight: 1.6, color: "#cbd5e1" },
-  fCard: { background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 10, padding: 12, marginBottom: 6 },
-  disc: { display: "flex", alignItems: "flex-start", gap: 7, background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.04)", borderRadius: 9, padding: "10px 12px", marginTop: 18 },
-  ov: { position: "fixed", inset: 0, background: "rgba(0,0,0,.87)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 12 },
-  pan: { background: "#111827", border: "1px solid rgba(255,255,255,.09)", borderRadius: 16, padding: "22px 18px", width: "92%", maxWidth: 360 },
-  panT: { fontSize: 17, fontWeight: 700, color: "#f1f5f9", marginBottom: 10 },
-  pri: { width: "100%", background: "#06b6d4", border: "none", borderRadius: 9, padding: 10, fontSize: 13, fontWeight: 600, color: "#fff", cursor: "pointer", marginTop: 8, fontFamily: "'IBM Plex Sans',sans-serif", display: "flex", alignItems: "center", justifyContent: "center" },
-  clX: { position: "absolute", top: -7, right: -7, background: "rgba(239,68,68,.82)", border: "none", borderRadius: "50%", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", cursor: "pointer", zIndex: 10 },
-  pdfPan: { background: "#111827", border: "1px solid rgba(255,255,255,.09)", borderRadius: 16, padding: 16, width: "95%", maxWidth: 900, maxHeight: "84vh", overflowY: "auto", position: "relative" },
-  pdfCtrl: { display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center", marginBottom: 8, padding: "6px 0", borderTop: "1px solid rgba(255,255,255,.05)", borderBottom: "1px solid rgba(255,255,255,.05)" },
-  sm: { background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 6, padding: "4px 8px", fontSize: 10, color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 2 },
-  rIn: { width: 38, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 4, padding: "3px 5px", fontSize: 10, color: "#e2e8f0", textAlign: "center", outline: "none" },
+  pulse: { width: 80, height: 80, borderRadius: "50%", background: "#15324a", display: "flex", alignItems: "center", justifyContent: "center", animation: "pulse-ring 2s infinite", marginBottom: 18 },
+  prB: { width: "78%", maxWidth: 260, height: 4, background: "#1a1d24", borderRadius: 2, overflow: "hidden", marginBottom: 8, marginLeft: "auto", marginRight: "auto" },
+  prF: { height: "100%", background: "#4aa3df", borderRadius: 2, transition: "width .4s" },
+  prT: { fontSize: 11, color: "#5f6672", fontFamily: "'JetBrains Mono',monospace" },
+  resH: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", background: "#13161c", border: "0.5px solid rgba(255,255,255,.07)", borderRadius: 8, padding: "14px", marginBottom: 8 },
+  bdLg: { fontSize: 11, fontWeight: 500, background: "#3a2e15", color: "#e0a93b", padding: "4px 10px", borderRadius: 4, whiteSpace: "nowrap", fontFamily: "'JetBrains Mono',monospace" },
+  bdOk: { fontSize: 11, fontWeight: 500, background: "#15332a", color: "#4ec99b", padding: "4px 10px", borderRadius: 4, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", fontFamily: "'JetBrains Mono',monospace" },
+  rvBtn: { flex: 1, background: "#13161c", border: "0.5px solid rgba(155,140,219,.2)", borderRadius: 6, padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, cursor: "pointer", color: "#9b8cdb", fontSize: 12, fontWeight: 500, fontFamily: "'IBM Plex Sans',sans-serif" },
+  repBtn: { flex: 1, background: "#13161c", border: "0.5px solid rgba(74,163,223,.2)", borderRadius: 6, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: "pointer", color: "#4aa3df", fontSize: 12, fontWeight: 500, fontFamily: "'IBM Plex Sans',sans-serif" },
+  sumC: { background: "#13161c", border: "0.5px solid rgba(155,140,219,.18)", borderRadius: 8, padding: 12, marginBottom: 8 },
+  sumT: { fontSize: 11, fontWeight: 500, color: "#9b8cdb", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 5, fontFamily: "'JetBrains Mono',monospace" },
+  sumTx: { fontSize: 13, lineHeight: 1.6, color: "#c4c9d0" },
+  fCard: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.07)", borderRadius: 8, padding: 12, marginBottom: 6 },
+  disc: { display: "flex", alignItems: "flex-start", gap: 7, background: "#13161c", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 6, padding: "10px 12px", marginTop: 18 },
+  ov: { position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 12 },
+  pan: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "22px 18px", width: "92%", maxWidth: 380 },
+  panT: { fontSize: 15, fontWeight: 500, color: "#e8eaed", marginBottom: 10 },
+  pri: { width: "100%", background: "#1d6ea8", border: "none", borderRadius: 6, padding: 10, fontSize: 13, fontWeight: 500, color: "#fff", cursor: "pointer", marginTop: 8, fontFamily: "'IBM Plex Sans',sans-serif", display: "flex", alignItems: "center", justifyContent: "center" },
+  clX: { position: "absolute", top: -7, right: -7, background: "rgba(226,75,74,.85)", border: "none", borderRadius: "50%", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", cursor: "pointer", zIndex: 10 },
+  pdfPan: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.1)", borderRadius: 10, padding: 16, width: "95%", maxWidth: 900, maxHeight: "84vh", overflowY: "auto", position: "relative" },
+  pdfCtrl: { display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center", marginBottom: 8, padding: "6px 0", borderTop: "0.5px solid rgba(255,255,255,.06)", borderBottom: "0.5px solid rgba(255,255,255,.06)" },
+  sm: { background: "#1a1d24", border: "0.5px solid rgba(255,255,255,.08)", borderRadius: 5, padding: "4px 8px", fontSize: 10, color: "#8b919c", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 2 },
+  rIn: { width: 38, background: "#1a1d24", border: "0.5px solid rgba(255,255,255,.08)", borderRadius: 4, padding: "3px 5px", fontSize: 10, color: "#e8eaed", textAlign: "center", outline: "none" },
   pdfG: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(100px,1fr))", gap: 6, marginBottom: 8 },
   pdfTh: { position: "relative", borderRadius: 6, overflow: "hidden", cursor: "pointer", transition: "border-color .15s" },
-  pdfCh: { position: "absolute", top: 2, right: 2, background: "#06b6d4", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" },
-  pdfN: { position: "absolute", bottom: 1, left: 1, background: "rgba(0,0,0,.7)", color: "#94a3b8", fontSize: 8, padding: "0 3px", borderRadius: 2, fontFamily: "'JetBrains Mono',monospace" },
-  refPan: { background: "#111827", border: "1px solid rgba(255,255,255,.09)", borderRadius: 16, padding: 16, width: "95%", maxWidth: 800, maxHeight: "84vh", overflowY: "auto", position: "relative" },
-  toast: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", background: "rgba(6,182,212,.88)", color: "#fff", padding: "8px 18px", borderRadius: 9, fontSize: 12, fontWeight: 600, zIndex: 200, boxShadow: "0 4px 16px rgba(0,0,0,.35)" },
+  pdfCh: { position: "absolute", top: 2, right: 2, background: "#4aa3df", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" },
+  pdfN: { position: "absolute", bottom: 1, left: 1, background: "rgba(0,0,0,.7)", color: "#8b919c", fontSize: 8, padding: "0 3px", borderRadius: 2, fontFamily: "'JetBrains Mono',monospace" },
+  refPan: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.1)", borderRadius: 10, padding: 16, width: "95%", maxWidth: 800, maxHeight: "84vh", overflowY: "auto", position: "relative" },
+  toast: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", background: "#1d6ea8", color: "#fff", padding: "8px 18px", borderRadius: 6, fontSize: 12, fontWeight: 500, zIndex: 200, boxShadow: "0 4px 16px rgba(0,0,0,.4)" },
 };
