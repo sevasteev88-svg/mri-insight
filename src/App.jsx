@@ -457,6 +457,11 @@ export default function MRIInsight() {
   const [roiStart, setRoiStart] = useState(null);
   const [roiResult, setRoiResult] = useState(null);
   const [roiLoading, setRoiLoading] = useState(false);
+  // Viewer zoom/pan state — separate for patient (L) and reference (R) panels
+  const [zoomL, setZoomL] = useState({ scale: 1, x: 0, y: 0 });
+  const [zoomR, setZoomR] = useState({ scale: 1, x: 0, y: 0 });
+  const [panning, setPanning] = useState(null); // {side, startX, startY, origX, origY}
+  const [refSource, setRefSource] = useState("refs"); // "refs" | "atlas" | "kb"
 
   const refIn = useRef(null), pdfIn = useRef(null), patIn = useRef(null), recRef = useRef(null), attachIn = useRef(null), atlasIn = useRef(null);
   const roiImgRef = useRef(null);
@@ -1531,69 +1536,151 @@ export default function MRIInsight() {
     );
   };
 
+  // ═══════════ VIEWER HELPERS (zoom/pan/wheel) ═══════════
+  const getZoom = (side) => side === "L" ? zoomL : zoomR;
+  const setZoom = (side, val) => side === "L" ? setZoomL(val) : setZoomR(val);
+
+  // Wheel: scroll = navigate slices, Ctrl+wheel = zoom
+  const onViewerWheel = (side, e, navFn, count) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const z = getZoom(side);
+      const delta = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      const newScale = Math.max(1, Math.min(6, z.scale * delta));
+      // reset pan if back to 1
+      if (newScale === 1) setZoom(side, { scale: 1, x: 0, y: 0 });
+      else setZoom(side, { ...z, scale: newScale });
+    } else {
+      e.preventDefault();
+      const dir = e.deltaY > 0 ? 1 : -1;
+      navFn(dir, count);
+    }
+  };
+
+  const resetZoom = (side) => setZoom(side, { scale: 1, x: 0, y: 0 });
+
+  // Pan when zoomed
+  const onViewerPanStart = (side, e) => {
+    const z = getZoom(side);
+    if (z.scale <= 1) return;
+    setPanning({ side, startX: e.clientX, startY: e.clientY, origX: z.x, origY: z.y });
+  };
+  const onViewerPanMove = (e) => {
+    if (!panning) return;
+    const z = getZoom(panning.side);
+    setZoom(panning.side, { ...z, x: panning.origX + (e.clientX - panning.startX), y: panning.origY + (e.clientY - panning.startY) });
+  };
+  const onViewerPanEnd = () => setPanning(null);
+
   const Split = () => {
-    const zr = refs[study?.zone] || [];
     const im = curImgs();
     const noteKey = `${seriesKey()}-${splitIdx}`;
-    const cc = roiResult ? confColor(roiResult.confidence_level || 50) : null;
+    // Reference source: refs / atlas / kb (text) — includes related structures
+    const refImgs = refSource === "refs" ? collectZoneMaterials(refs, study?.zone)
+      : refSource === "atlas" ? collectZoneMaterials(atlas, study?.zone) : [];
+    const kbEntries = collectZoneMaterials(kb, study?.zone);
+    const navSlice = (dir) => { setSplitIdx(p => Math.max(0, Math.min(im.length - 1, p + dir))); setRoi(null); setRoiResult(null); };
+    const navRef = (dir) => setRefIdx(p => Math.max(0, Math.min(refImgs.length - 1, p + dir)));
+
     return (
-      <div style={{ padding: "8px 12px 12px", color: "#e2e8f0", fontFamily: "'IBM Plex Sans',sans-serif" }}>
+      <div style={{ padding: "8px 12px 12px", color: "#e8eaed", fontFamily: "'IBM Plex Sans',sans-serif" }}
+        onMouseMove={onViewerPanMove} onMouseUp={onViewerPanEnd} onMouseLeave={onViewerPanEnd}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <button onClick={() => { setScr(prevScr); setRoi(null); setRoiResult(null); }} style={P.bk}><ArrowLeft size={16} /> Назад</button>
-          <span style={{ fontSize: 14, fontWeight: 700, color: "#f1f5f9" }}>Порівняння</span>
+          <button onClick={() => { setScr(prevScr); setRoi(null); setRoiResult(null); resetZoom("L"); resetZoom("R"); }} style={P.bk}><ArrowLeft size={16} /> Назад</button>
+          <span style={{ fontSize: 14, fontWeight: 500, color: "#e8eaed" }}>Порівняння</span>
+          <span style={{ fontSize: 9, color: "#5f6672", fontFamily: "'JetBrains Mono',monospace" }}>колесо — зрізи · Ctrl+колесо — зум</span>
           <div style={{ display: "flex", gap: 3, marginLeft: "auto", flexWrap: "wrap" }}>
             {Object.entries(seriesCounts()).map(([k, cnt]) => (
-              <button key={k} onClick={() => { const [seq, pl] = k.split("_"); setStudy(p => ({ ...p, activeSeq: seq, activePlane: pl })); setSplitIdx(0); setRoi(null); setRoiResult(null); }}
+              <button key={k} onClick={() => { const [seq, pl] = k.split("_"); setStudy(p => ({ ...p, activeSeq: seq, activePlane: pl })); setSplitIdx(0); setRoi(null); setRoiResult(null); resetZoom("L"); }}
                 style={{ ...k === seriesKey() ? P.sqOn : P.sq, padding: "4px 8px", fontSize: 9 }}>{k.replace("_", " ")} ({cnt})</button>
             ))}
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: roiResult ? "1fr 1fr 300px" : "1fr 1fr", gap: 6, height: "calc(100vh - 80px)" }}>
-          {/* PATIENT with ROI */}
-          <div style={{ background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column" }}>
-            <p style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textAlign: "center", marginBottom: 3, textTransform: "uppercase", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-              <Crosshair size={10} /> Пацієнт · {study?.activeSeq} {study?.activePlane} · {im.length > 0 ? `${splitIdx + 1}/${im.length}` : "—"}
-            </p>
-            <div ref={roiImgRef} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: "crosshair", userSelect: "none" }}
-              onMouseDown={roiMouseDown} onMouseMove={roiMouseMove} onMouseUp={roiMouseUp} onMouseLeave={() => { if (roiDrawing) setRoiDrawing(false); }}>
-              {im[splitIdx] ? <img src={im[splitIdx].data} alt="" draggable={false} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 6, pointerEvents: "none" }} /> : <span style={{ color: "#334155" }}>—</span>}
-              {/* ROI rectangle overlay */}
-              {roi && (
-                <div style={{
-                  position: "absolute",
-                  left: `${roi.x * 100}%`, top: `${roi.y * 100}%`,
-                  width: `${roi.w * 100}%`, height: `${roi.h * 100}%`,
-                  border: "2px solid #f59e0b", background: "rgba(245,158,11,.12)",
-                  borderRadius: 3, pointerEvents: "none",
-                  boxShadow: "0 0 0 9999px rgba(0,0,0,.3)",
-                }} />
+          {/* PATIENT with ROI + zoom */}
+          <div style={{ background: "#0f1217", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px 3px" }}>
+              <span style={{ fontSize: 10, fontWeight: 500, color: "#8b919c", textTransform: "uppercase", fontFamily: "'JetBrains Mono',monospace", display: "flex", alignItems: "center", gap: 4 }}>
+                <Crosshair size={10} /> Пацієнт · {study?.activeSeq} {study?.activePlane}
+              </span>
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                {zoomL.scale > 1 && <button onClick={() => resetZoom("L")} style={{ ...P.sm, padding: "2px 6px", fontSize: 9 }}>{zoomL.scale.toFixed(1)}× ✕</button>}
+                <span style={{ fontSize: 10, color: "#5f6672", fontFamily: "'JetBrains Mono',monospace" }}>{im.length > 0 ? `${splitIdx + 1}/${im.length}` : "—"}</span>
+              </span>
+            </div>
+            <div ref={roiImgRef}
+              onWheel={(e) => onViewerWheel("L", e, navSlice)}
+              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomL.scale > 1 ? (panning ? "grabbing" : "grab") : "crosshair", userSelect: "none" }}
+              onMouseDown={(e) => { if (zoomL.scale > 1) onViewerPanStart("L", e); else roiMouseDown(e); }}
+              onMouseMove={(e) => { if (zoomL.scale <= 1) roiMouseMove(e); }}
+              onMouseUp={() => { if (zoomL.scale <= 1) roiMouseUp(); }}>
+              {im[splitIdx] ? (
+                <img src={im[splitIdx].data} alt="" draggable={false}
+                  style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", transform: `translate(${zoomL.x}px, ${zoomL.y}px) scale(${zoomL.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
+              ) : <span style={{ color: "#3a3f47" }}>—</span>}
+              {roi && zoomL.scale <= 1 && (
+                <div style={{ position: "absolute", left: `${roi.x * 100}%`, top: `${roi.y * 100}%`, width: `${roi.w * 100}%`, height: `${roi.h * 100}%`, border: "2px solid #e0a93b", background: "rgba(224,169,59,.12)", borderRadius: 3, pointerEvents: "none", boxShadow: "0 0 0 9999px rgba(0,0,0,.35)" }} />
               )}
             </div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "4px 0", flexWrap: "wrap" }}>
-              <button disabled={splitIdx <= 0} onClick={() => { setSplitIdx(splitIdx - 1); setRoi(null); setRoiResult(null); }} style={P.nv}><ChevronLeft size={14} /></button>
-              <span style={{ fontSize: 10, color: "#64748b" }}>{im.length > 0 ? `${splitIdx + 1}/${im.length}` : "—"}</span>
-              <button disabled={splitIdx >= im.length - 1} onClick={() => { setSplitIdx(splitIdx + 1); setRoi(null); setRoiResult(null); }} style={P.nv}><ChevronRight size={14} /></button>
-              <button onClick={() => recording === noteKey ? stopVoice() : startVoice(noteKey)} style={{ ...P.sm, marginLeft: 4, background: recording === noteKey ? "rgba(239,68,68,.18)" : "rgba(255,255,255,.04)", color: recording === noteKey ? "#ef4444" : "#94a3b8" }}>{recording === noteKey ? <MicOff size={11} /> : <Mic size={11} />}</button>
-              {roi && roi.w > 0.02 && (
+              <button disabled={splitIdx <= 0} onClick={() => navSlice(-1)} style={P.nv}><ChevronLeft size={14} /></button>
+              <span style={{ fontSize: 10, color: "#8b919c", fontFamily: "'JetBrains Mono',monospace" }}>{im.length > 0 ? `${splitIdx + 1}/${im.length}` : "—"}</span>
+              <button disabled={splitIdx >= im.length - 1} onClick={() => navSlice(1)} style={P.nv}><ChevronRight size={14} /></button>
+              <button onClick={() => recording === noteKey ? stopVoice() : startVoice(noteKey)} style={{ ...P.sm, marginLeft: 4, background: recording === noteKey ? "rgba(226,75,74,.18)" : "#1a1d24", color: recording === noteKey ? "#e24b4a" : "#8b919c" }}>{recording === noteKey ? <MicOff size={11} /> : <Mic size={11} />}</button>
+              {roi && roi.w > 0.02 && zoomL.scale <= 1 && (
                 <button onClick={analyzeRoi} disabled={roiLoading} style={{ ...P.sm, padding: "4px 12px", background: "rgba(224,169,59,.14)", border: "0.5px solid rgba(224,169,59,.3)", color: "#e0a93b" }}>
                   {roiLoading ? "⏳ Визначення..." : <><Crosshair size={12} /> Що це за структура?</>}
                 </button>
               )}
               {roi && <button onClick={() => { setRoi(null); setRoiResult(null); }} style={{ ...P.sm, padding: "4px 8px", color: "#8b919c" }}><X size={12} /></button>}
             </div>
-            {!roi && <p style={{ fontSize: 9, color: "#5f6672", textAlign: "center" }}>Виділіть мишкою структуру — ІІ допоможе визначити що це</p>}
+            {!roi && zoomL.scale <= 1 && <p style={{ fontSize: 9, color: "#5f6672", textAlign: "center" }}>Виділіть мишкою структуру — ІІ допоможе визначити що це</p>}
+            {zoomL.scale > 1 && <p style={{ fontSize: 9, color: "#5f6672", textAlign: "center" }}>Перетягуйте для переміщення · Ctrl+колесо для зуму</p>}
           </div>
-          {/* REFERENCE */}
-          <div style={{ background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column" }}>
-            <p style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textAlign: "center", marginBottom: 3, textTransform: "uppercase" }}>Норма · {zr.length > 0 ? `${refIdx + 1}/${zr.length}` : "—"}</p>
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-              {zr[refIdx] ? <img src={zr[refIdx].data} alt="" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 6, cursor: "pointer" }} onClick={() => setViewImg(zr[refIdx])} /> : <span style={{ color: "#334155" }}>Немає реф.</span>}
+
+          {/* REFERENCE with source toggle + zoom */}
+          <div style={{ background: "#0f1217", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px 4px", gap: 6 }}>
+              <div style={{ display: "flex", gap: 3 }}>
+                {[["refs", "Референси"], ["atlas", "Атлас"], ["kb", "База знань"]].map(([k, lbl]) => {
+                  const cnt = k === "refs" ? collectZoneMaterials(refs, study?.zone).length : k === "atlas" ? collectZoneMaterials(atlas, study?.zone).length : kbEntries.length;
+                  return <button key={k} onClick={() => { setRefSource(k); setRefIdx(0); resetZoom("R"); }}
+                    style={{ ...refSource === k ? P.sqOn : P.sq, padding: "3px 8px", fontSize: 9 }}>{lbl} ({cnt})</button>;
+                })}
+              </div>
+              {refSource !== "kb" && zoomR.scale > 1 && <button onClick={() => resetZoom("R")} style={{ ...P.sm, padding: "2px 6px", fontSize: 9 }}>{zoomR.scale.toFixed(1)}× ✕</button>}
             </div>
-            {zr.length > 0 && <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "4px 0" }}>
-              <button disabled={refIdx <= 0} onClick={() => setRefIdx(refIdx - 1)} style={P.nv}><ChevronLeft size={14} /></button>
-              <span style={{ fontSize: 10, color: "#64748b" }}>{refIdx + 1}/{zr.length}</span>
-              <button disabled={refIdx >= zr.length - 1} onClick={() => setRefIdx(refIdx + 1)} style={P.nv}><ChevronRight size={14} /></button>
-            </div>}
+
+            {refSource === "kb" ? (
+              <div style={{ flex: 1, overflowY: "auto", padding: 4 }}>
+                {kbEntries.length === 0 ? <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#3a3f47", fontSize: 12 }}>Немає правил для цієї зони</div>
+                  : kbEntries.map((e, i) => (
+                    <div key={i} style={{ background: "#13161c", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 6, padding: 10, marginBottom: 6 }}>
+                      <h4 style={{ fontSize: 12, fontWeight: 500, color: "#e0a93b", marginBottom: 5 }}>{e.title}</h4>
+                      <p style={{ fontSize: 11, color: "#c4c9d0", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{e.text}</p>
+                    </div>
+                  ))}
+              </div>
+            ) : (
+              <>
+                <div onWheel={(e) => onViewerWheel("R", e, navRef)}
+                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomR.scale > 1 ? (panning ? "grabbing" : "grab") : "default", userSelect: "none" }}
+                  onMouseDown={(e) => { if (zoomR.scale > 1) onViewerPanStart("R", e); }}>
+                  {refImgs[refIdx] ? (
+                    <img src={refImgs[refIdx].data} alt="" draggable={false}
+                      style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", transform: `translate(${zoomR.x}px, ${zoomR.y}px) scale(${zoomR.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
+                  ) : <span style={{ color: "#3a3f47", fontSize: 12 }}>{refSource === "atlas" ? "Немає атласу" : "Немає референсів"}</span>}
+                  {refImgs[refIdx]?.label && <span style={{ position: "absolute", bottom: 4, left: 4, right: 4, background: "rgba(0,0,0,.8)", color: "#e8eaed", fontSize: 10, padding: "3px 6px", borderRadius: 4, lineHeight: 1.3 }}>{refImgs[refIdx].label}</span>}
+                </div>
+                {refImgs.length > 0 && (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "4px 0" }}>
+                    <button disabled={refIdx <= 0} onClick={() => navRef(-1)} style={P.nv}><ChevronLeft size={14} /></button>
+                    <span style={{ fontSize: 10, color: "#8b919c", fontFamily: "'JetBrains Mono',monospace" }}>{refIdx + 1}/{refImgs.length}</span>
+                    <button disabled={refIdx >= refImgs.length - 1} onClick={() => navRef(1)} style={P.nv}><ChevronRight size={14} /></button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
           {/* ROI RESULT PANEL — ORIENTATION MODE */}
           {roiResult && (() => {
