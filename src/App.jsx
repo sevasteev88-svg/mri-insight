@@ -5,7 +5,7 @@ import {
   Eye, ChevronRight, AlertCircle, CheckCircle, Mic, MicOff, Search,
   EyeOff, Columns, FileText, Check, ExternalLink, ChevronLeft,
   Volume2, Square, Info, Archive, Trash2, RotateCcw, Paperclip, Crosshair
-, Activity, Sun, Clipboard, Download} from "lucide-react";
+, Activity, Sun, Clipboard, Download, Ruler, TriangleRight} from "lucide-react";
 
 // ═══════════ IndexedDB HELPERS ═══════════
 const DB_NAME = "mri-insight-db";
@@ -438,6 +438,9 @@ export default function MRIInsight() {
   const [toolMode, setToolMode] = useState("roi");
   const [measurements, setMeasurements] = useState([]);
   const [activeMeasure, setActiveMeasure] = useState(null);
+  const [activeArea, setActiveArea] = useState(null);
+  const [activeAngle, setActiveAngle] = useState([]);
+  const [angleMousePos, setAngleMousePos] = useState(null);
   const [zoomR, setZoomR] = useState({ scale: 1, x: 0, y: 0 });
   const [panning, setPanning] = useState(null); // {side, startX, startY, origX, origY}
   const [refSource, setRefSource] = useState("refs"); // "refs" | "atlas" | "kb"
@@ -869,48 +872,101 @@ const INITIAL_KB = {
   };
 
   
-  const measureMouseDown = (e) => {
+  
+  const toolMouseDown = (e) => {
+    if (toolMode === "roi") return roiMouseDown(e);
     const rect = e.currentTarget.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
     const y = (e.clientY - rect.top) / rect.height;
-    setActiveMeasure({ startX: x, startY: y, endX: x, endY: y });
+    
+    if (toolMode === "measure_line") {
+      setActiveMeasure({ startX: x, startY: y, endX: x, endY: y });
+    } else if (toolMode === "measure_area") {
+      setActiveArea({ startX: x, startY: y, endX: x, endY: y });
+    } else if (toolMode === "measure_angle") {
+      if (activeAngle.length === 0) {
+        setActiveAngle([{x, y}]);
+      } else if (activeAngle.length === 1) {
+        setActiveAngle([activeAngle[0], {x, y}]);
+      } else if (activeAngle.length === 2) {
+        const pts = [activeAngle[0], activeAngle[1], {x, y}];
+        const v1 = { x: pts[1].x - pts[0].x, y: pts[1].y - pts[0].y };
+        const v2 = { x: pts[2].x - pts[0].x, y: pts[2].y - pts[0].y };
+        const dot = v1.x*v2.x + v1.y*v2.y;
+        const mag1 = Math.sqrt(v1.x*v1.x + v1.y*v1.y);
+        const mag2 = Math.sqrt(v2.x*v2.x + v2.y*v2.y);
+        let deg = Math.acos(dot / (mag1 * mag2)) * (180 / Math.PI);
+        if (isNaN(deg)) deg = 0;
+        
+        setMeasurements([...measurements, { type: "angle", pts, deg }]);
+        setActiveAngle([]);
+        setAngleMousePos(null);
+      }
+    }
   };
 
-  const measureMouseMove = (e) => {
-    if (!activeMeasure) return;
+  const toolMouseMove = (e) => {
+    if (toolMode === "roi") return roiMouseMove(e);
     const rect = e.currentTarget.getBoundingClientRect();
     const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-    setActiveMeasure({ ...activeMeasure, endX: x, endY: y });
+
+    if (toolMode === "measure_line" && activeMeasure) {
+      setActiveMeasure({ ...activeMeasure, endX: x, endY: y });
+    } else if (toolMode === "measure_area" && activeArea) {
+      setActiveArea({ ...activeArea, endX: x, endY: y });
+    } else if (toolMode === "measure_angle" && activeAngle.length > 0) {
+      setAngleMousePos({ x, y });
+    }
   };
 
-  const measureMouseUp = async () => {
-    if (!activeMeasure) return;
+  const toolMouseUp = async () => {
+    if (toolMode === "roi") return roiMouseUp();
+    
     const im = curImgs();
     const imgObj = im[splitIdx];
-    if (imgObj) {
-      // Calculate distance
-      const img = new window.Image();
-      await new Promise(r => { img.onload = r; img.src = imgObj.data; });
-      const rect = roiImgRef.current.getBoundingClientRect();
+    if (!imgObj) return;
+    
+    const img = new window.Image();
+    await new Promise(r => { img.onload = r; img.src = imgObj.data; });
+    const rect = roiImgRef.current.getBoundingClientRect();
+    const scaleX = rect.width / (img.width || 512);
+    const scaleY = rect.height / (img.height || 512);
+
+    if (toolMode === "measure_line" && activeMeasure) {
       const dxScreen = (activeMeasure.endX - activeMeasure.startX) * rect.width;
       const dyScreen = (activeMeasure.endY - activeMeasure.startY) * rect.height;
       const distScreen = Math.sqrt(dxScreen*dxScreen + dyScreen*dyScreen);
-      
-      const scale = Math.min(rect.width / (img.width || 512), rect.height / (img.height || 512));
-      const distImg = distScreen / (scale || 1);
+      const distImg = distScreen / (scaleX || 1); // Assuming uniform scale mostly
       
       let distMm = null;
-      if (imgObj.ps && imgObj.ps.length >= 1) {
-        distMm = distImg * imgObj.ps[0];
-      }
+      if (imgObj.ps && imgObj.ps.length >= 1) distMm = distImg * imgObj.ps[0];
       
       if (distScreen > 5) {
-        setMeasurements([...measurements, { ...activeMeasure, mm: distMm, px: distImg }]);
+        setMeasurements([...measurements, { type: "line", ...activeMeasure, mm: distMm, px: distImg }]);
       }
+      setActiveMeasure(null);
+      
+    } else if (toolMode === "measure_area" && activeArea) {
+      const dxScreen = Math.abs(activeArea.endX - activeArea.startX) * rect.width;
+      const dyScreen = Math.abs(activeArea.endY - activeArea.startY) * rect.height;
+      const rxImg = (dxScreen / 2) / (scaleX || 1);
+      const ryImg = (dyScreen / 2) / (scaleY || 1);
+      
+      let areaMm2 = null;
+      if (imgObj.ps && imgObj.ps.length >= 2) {
+        areaMm2 = Math.PI * (rxImg * imgObj.ps[0]) * (ryImg * imgObj.ps[1]);
+      } else if (imgObj.ps && imgObj.ps.length >= 1) {
+        areaMm2 = Math.PI * (rxImg * imgObj.ps[0]) * (ryImg * imgObj.ps[0]);
+      }
+      
+      if (dxScreen > 5 && dyScreen > 5) {
+        setMeasurements([...measurements, { type: "area", ...activeArea, areaMm2 }]);
+      }
+      setActiveArea(null);
     }
-    setActiveMeasure(null);
   };
+
 
   const roiMouseMove = (e) => {
     if (!roiDrawing || !roiStart) return;
@@ -1874,9 +1930,9 @@ const Split = () => {
             <div ref={roiImgRef}
               onWheel={(e) => onViewerWheel("L", e, navSlice)}
               style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomL.scale > 1 ? (panning ? "grabbing" : "grab") : "crosshair", userSelect: "none" }}
-              onContextMenu={(e)=>e.preventDefault()} onMouseDown={(e) => { if (e.button === 2) { onWindowStart("L", e); return; } if (zoomL.scale > 1) onViewerPanStart("L", e); else { if (toolMode==="roi") roiMouseDown(e); else if (toolMode==="measure") measureMouseDown(e); else onWindowStart("L", e); } }}
-              onMouseMove={(e) => { if (zoomL.scale <= 1) { if (toolMode==="roi") roiMouseMove(e); else if (toolMode==="measure") measureMouseMove(e); } }}
-              onMouseUp={() => { if (zoomL.scale <= 1) { if (toolMode==="roi") roiMouseUp(); else measureMouseUp(); } }}>
+              onContextMenu={(e)=>e.preventDefault()} onMouseDown={(e) => { if (e.button === 2) { onWindowStart("L", e); return; } if (zoomL.scale > 1) onViewerPanStart("L", e); else { if (toolMode.startsWith("measure") || toolMode === "roi") toolMouseDown(e); else onWindowStart("L", e); } }}
+              onMouseMove={(e) => { if (zoomL.scale <= 1) { if (toolMode.startsWith("measure") || toolMode === "roi") toolMouseMove(e); } }}
+              onMouseUp={() => { if (zoomL.scale <= 1) { if (toolMode.startsWith("measure") || toolMode === "roi") toolMouseUp(); } }}>
               {im[splitIdx] ? (
                 <img src={im[splitIdx].data} alt="" draggable={false}
                   style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", filter: `brightness(${wlL.b}%) contrast(${wlL.c}%)`, transform: `translate(${zoomL.x}px, ${zoomL.y}px) scale(${zoomL.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
@@ -1885,20 +1941,67 @@ const Split = () => {
                 <div style={{ position: "absolute", left: `${roi.x * 100}%`, top: `${roi.y * 100}%`, width: `${roi.w * 100}%`, height: `${roi.h * 100}%`, border: "2px solid #e0a93b", background: "rgba(224,169,59,.12)", borderRadius: 3, pointerEvents: "none", boxShadow: "0 0 0 9999px rgba(0,0,0,.35)" }} />
               )}
               {/* Measurements Layer */}
-              {zoomL.scale <= 1 && (measurements.length > 0 || activeMeasure) && (
+              {zoomL.scale <= 1 && (measurements.length > 0 || activeMeasure || activeArea || activeAngle.length > 0) && (
                 <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 10 }}>
-                  {measurements.map((m, i) => (
-                    <g key={i}>
-                      <line x1={`${m.startX*100}%`} y1={`${m.startY*100}%`} x2={`${m.endX*100}%`} y2={`${m.endY*100}%`} stroke="#e0a93b" strokeWidth="2" />
-                      <circle cx={`${m.startX*100}%`} cy={`${m.startY*100}%`} r="3" fill="#e0a93b" />
-                      <circle cx={`${m.endX*100}%`} cy={`${m.endY*100}%`} r="3" fill="#e0a93b" />
-                      <text x={`${(m.startX + m.endX)*50}%`} y={`${(m.startY + m.endY)*50}%`} fill="#fff" fontSize="12" fontWeight="600" style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }} dx="5" dy="-5">
-                        {m.mm ? `${m.mm.toFixed(1)} mm` : `${Math.round(m.px)} px`}
-                      </text>
-                    </g>
-                  ))}
+                  {measurements.map((m, i) => {
+                    if (m.type === "line") {
+                      return (
+                        <g key={i}>
+                          <line x1={`${m.startX*100}%`} y1={`${m.startY*100}%`} x2={`${m.endX*100}%`} y2={`${m.endY*100}%`} stroke="#e0a93b" strokeWidth="2" />
+                          <circle cx={`${m.startX*100}%`} cy={`${m.startY*100}%`} r="3" fill="#e0a93b" />
+                          <circle cx={`${m.endX*100}%`} cy={`${m.endY*100}%`} r="3" fill="#e0a93b" />
+                          <text x={`${(m.startX + m.endX)*50}%`} y={`${(m.startY + m.endY)*50}%`} fill="#fff" fontSize="12" fontWeight="600" style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }} dx="5" dy="-5">
+                            {m.mm ? `${m.mm.toFixed(1)} mm` : `${Math.round(m.px)} px`}
+                          </text>
+                        </g>
+                      );
+                    } else if (m.type === "area") {
+                      const cx = (m.startX + m.endX) / 2;
+                      const cy = (m.startY + m.endY) / 2;
+                      const rx = Math.abs(m.endX - m.startX) / 2;
+                      const ry = Math.abs(m.endY - m.startY) / 2;
+                      return (
+                        <g key={i}>
+                          <ellipse cx={`${cx*100}%`} cy={`${cy*100}%`} rx={`${rx*100}%`} ry={`${ry*100}%`} stroke="#4aa3df" strokeWidth="2" fill="rgba(74,163,223,0.15)"/>
+                          <text x={`${cx*100}%`} y={`${cy*100}%`} fill="#fff" fontSize="12" fontWeight="600" style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }} textAnchor="middle">
+                            {m.areaMm2 ? `${Math.round(m.areaMm2)} mm²` : '?'}
+                          </text>
+                        </g>
+                      );
+                    } else if (m.type === "angle") {
+                      return (
+                        <g key={i}>
+                          <polyline points={`${m.pts[1].x*100}%,${m.pts[1].y*100}% ${m.pts[0].x*100}%,${m.pts[0].y*100}% ${m.pts[2].x*100}%,${m.pts[2].y*100}%`} stroke="#e24b4a" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                          <circle cx={`${m.pts[0].x*100}%`} cy={`${m.pts[0].y*100}%`} r="3" fill="#e24b4a" />
+                          <circle cx={`${m.pts[1].x*100}%`} cy={`${m.pts[1].y*100}%`} r="3" fill="#e24b4a" />
+                          <circle cx={`${m.pts[2].x*100}%`} cy={`${m.pts[2].y*100}%`} r="3" fill="#e24b4a" />
+                          <text x={`${m.pts[0].x*100}%`} y={`${m.pts[0].y*100}%`} fill="#fff" fontSize="12" fontWeight="600" style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }} dx="10" dy="10">
+                            {m.deg.toFixed(1)}°
+                          </text>
+                        </g>
+                      );
+                    }
+                    return null;
+                  })}
+
+                  {/* Active Drawings */}
                   {activeMeasure && (
                     <line x1={`${activeMeasure.startX*100}%`} y1={`${activeMeasure.startY*100}%`} x2={`${activeMeasure.endX*100}%`} y2={`${activeMeasure.endY*100}%`} stroke="rgba(224,169,59,.6)" strokeWidth="2" strokeDasharray="4" />
+                  )}
+                  {activeArea && (() => {
+                    const cx = (activeArea.startX + activeArea.endX) / 2;
+                    const cy = (activeArea.startY + activeArea.endY) / 2;
+                    const rx = Math.abs(activeArea.endX - activeArea.startX) / 2;
+                    const ry = Math.abs(activeArea.endY - activeArea.startY) / 2;
+                    return <ellipse cx={`${cx*100}%`} cy={`${cy*100}%`} rx={`${rx*100}%`} ry={`${ry*100}%`} stroke="rgba(74,163,223,.6)" strokeWidth="2" fill="rgba(74,163,223,0.1)" strokeDasharray="4"/>
+                  })()}
+                  {activeAngle.length > 0 && angleMousePos && (
+                    <g>
+                      {activeAngle.length === 1 && <line x1={`${activeAngle[0].x*100}%`} y1={`${activeAngle[0].y*100}%`} x2={`${angleMousePos.x*100}%`} y2={`${angleMousePos.y*100}%`} stroke="rgba(226,75,74,.6)" strokeWidth="2" strokeDasharray="4" />}
+                      {activeAngle.length === 2 && (
+                        <polyline points={`${activeAngle[1].x*100}%,${activeAngle[1].y*100}% ${activeAngle[0].x*100}%,${activeAngle[0].y*100}% ${angleMousePos.x*100}%,${angleMousePos.y*100}%`} stroke="rgba(226,75,74,.6)" strokeWidth="2" strokeDasharray="4" fill="none"/>
+                      )}
+                    </g>
                   )}
                 </svg>
               )}
@@ -1908,7 +2011,11 @@ const Split = () => {
               
               <div style={{ display: "flex", gap: 2, marginRight: 8, background: "#1a1d24", borderRadius: 6, padding: 2 }}>
                 <button onClick={() => { setToolMode("roi"); setMeasurements([]); setActiveMeasure(null); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "roi" ? "rgba(74,163,223,.18)" : "transparent", color: toolMode === "roi" ? "#4aa3df" : "#8b919c", border: "none" }} title="Виділення (ROI)"><Crosshair size={12} /></button>
-                <button onClick={() => { setToolMode("measure"); setRoi(null); setRoiResult(null); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "measure" ? "rgba(224,169,59,.18)" : "transparent", color: toolMode === "measure" ? "#e0a93b" : "#8b919c", border: "none" }} title="Лінійка"><Activity size={12} /></button>
+                
+                <button onClick={() => { setToolMode("measure_line"); setRoi(null); setRoiResult(null); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "measure_line" ? "rgba(224,169,59,.18)" : "transparent", color: toolMode === "measure_line" ? "#e0a93b" : "#8b919c", border: "none" }} title="Лінійка (Відстань)"><Ruler size={12} /></button>
+                <button onClick={() => { setToolMode("measure_angle"); setRoi(null); setRoiResult(null); setActiveAngle([]); setAngleMousePos(null); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "measure_angle" ? "rgba(226,75,74,.18)" : "transparent", color: toolMode === "measure_angle" ? "#e24b4a" : "#8b919c", border: "none" }} title="Кут (3 точки)"><TriangleRight size={12} /></button>
+                <button onClick={() => { setToolMode("measure_area"); setRoi(null); setRoiResult(null); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "measure_area" ? "rgba(74,163,223,.18)" : "transparent", color: toolMode === "measure_area" ? "#4aa3df" : "#8b919c", border: "none" }} title="Площа (Еліпс)"><Circle size={12} /></button>
+
                 <button onClick={() => { setToolMode("window"); setRoi(null); setRoiResult(null); setMeasurements([]); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "window" ? "rgba(74,163,223,.18)" : "transparent", color: toolMode === "window" ? "#4aa3df" : "#8b919c", border: "none" }} title="Контраст (W/L)"><Sun size={12} /></button>
               </div>
               <button onClick={scanSeries} disabled={aiScanning || im.length===0} style={{ ...P.sm, padding: "4px 8px", background: "rgba(139,92,246,.18)", color: "#8b5cf6", border: "none", marginRight: 8 }}>
