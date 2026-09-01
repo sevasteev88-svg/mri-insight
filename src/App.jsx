@@ -5,7 +5,7 @@ import {
   Eye, ChevronRight, AlertCircle, CheckCircle, Mic, MicOff, Search,
   EyeOff, Columns, FileText, Check, ExternalLink, ChevronLeft,
   Volume2, Square, Info, Archive, Trash2, RotateCcw, Paperclip, Crosshair
-} from "lucide-react";
+, Activity} from "lucide-react";
 
 // ═══════════ IndexedDB HELPERS ═══════════
 const DB_NAME = "mri-insight-db";
@@ -423,6 +423,9 @@ export default function MRIInsight() {
   const [manualQuery, setManualQuery] = useState("");
   // Viewer zoom/pan state — separate for patient (L) and reference (R) panels
   const [zoomL, setZoomL] = useState({ scale: 1, x: 0, y: 0 });
+  const [toolMode, setToolMode] = useState("roi");
+  const [measurements, setMeasurements] = useState([]);
+  const [activeMeasure, setActiveMeasure] = useState(null);
   const [zoomR, setZoomR] = useState({ scale: 1, x: 0, y: 0 });
   const [panning, setPanning] = useState(null); // {side, startX, startY, origX, origY}
   const [refSource, setRefSource] = useState("refs"); // "refs" | "atlas" | "kb"
@@ -534,6 +537,7 @@ const INITIAL_KB = {
       let d = null;
       let detectedSeq = study?.activeSeq || "T2";
       let detectedPlane = study?.activePlane || "Sag";
+      let ps = null;
 
       if (f.name.toLowerCase().endsWith(".dcm") || f.name.toLowerCase().endsWith(".dicom") || f.type === "application/dicom" || (!f.type.startsWith("image/") && !f.type.startsWith("video/"))) {
         try {
@@ -584,6 +588,14 @@ const INITIAL_KB = {
               if(rawData[i] < min) min = rawData[i];
               if(rawData[i] > max) max = rawData[i];
             }
+            let psTag = image.getTag(0x0028, 0x0030);
+            if (psTag && psTag.value) {
+              if (Array.isArray(psTag.value) && psTag.value.length >= 2) ps = [parseFloat(psTag.value[0]), parseFloat(psTag.value[1])];
+              else if (typeof psTag.value[0] === 'string') {
+                const parts = psTag.value[0].split('\\');
+                if (parts.length >= 2) ps = [parseFloat(parts[0]), parseFloat(parts[1])];
+              }
+            }
             let wc = image.getWindowCenter();
             let ww = image.getWindowWidth();
             if (Array.isArray(wc)) wc = wc[0];
@@ -613,7 +625,7 @@ const INITIAL_KB = {
       }
 
       const fin = (target === "patient" && anon) ? await anonymizeImage(d) : d;
-      const obj = { id: Date.now() + Math.random(), name: f.name, data: fin, ts: Date.now() };
+      const obj = { id: Date.now() + Math.random(), name: f.name, data: fin, ts: Date.now(), ps };
       if (target === "ref") setRefs(p => ({ ...p, [selZone]: [...(p[selZone] || []), obj] }));
       else { 
         const k = `${detectedSeq}_${detectedPlane}`; 
@@ -842,6 +854,50 @@ const INITIAL_KB = {
     setRoiDrawing(true);
     setRoi(null);
     setRoiResult(null);
+  };
+
+  
+  const measureMouseDown = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    setActiveMeasure({ startX: x, startY: y, endX: x, endY: y });
+  };
+
+  const measureMouseMove = (e) => {
+    if (!activeMeasure) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    setActiveMeasure({ ...activeMeasure, endX: x, endY: y });
+  };
+
+  const measureMouseUp = async () => {
+    if (!activeMeasure) return;
+    const im = curImgs();
+    const imgObj = im[splitIdx];
+    if (imgObj) {
+      // Calculate distance
+      const img = new window.Image();
+      await new Promise(r => { img.onload = r; img.src = imgObj.data; });
+      const rect = roiImgRef.current.getBoundingClientRect();
+      const dxScreen = (activeMeasure.endX - activeMeasure.startX) * rect.width;
+      const dyScreen = (activeMeasure.endY - activeMeasure.startY) * rect.height;
+      const distScreen = Math.sqrt(dxScreen*dxScreen + dyScreen*dyScreen);
+      
+      const scale = Math.min(rect.width / (img.width || 512), rect.height / (img.height || 512));
+      const distImg = distScreen / (scale || 1);
+      
+      let distMm = null;
+      if (imgObj.ps && imgObj.ps.length >= 1) {
+        distMm = distImg * imgObj.ps[0];
+      }
+      
+      if (distScreen > 5) {
+        setMeasurements([...measurements, { ...activeMeasure, mm: distMm, px: distImg }]);
+      }
+    }
+    setActiveMeasure(null);
   };
 
   const roiMouseMove = (e) => {
@@ -1633,7 +1689,7 @@ const INITIAL_KB = {
     const refImgs = refSource === "refs" ? collectZoneMaterials(refs, study?.zone)
       : refSource === "atlas" ? collectZoneMaterials(atlas, study?.zone) : [];
     const kbEntries = collectZoneMaterials(kb, study?.zone);
-    const navSlice = (dir) => { setSplitIdx(p => Math.max(0, Math.min(im.length - 1, p + dir))); setRoi(null); setRoiResult(null); };
+    const navSlice = (dir) => { setSplitIdx(p => Math.max(0, Math.min(im.length - 1, p + dir))); setRoi(null); setRoiResult(null); setMeasurements([]); };
     const navRef = (dir) => setRefIdx(p => Math.max(0, Math.min(refImgs.length - 1, p + dir)));
 
     return (
@@ -1671,9 +1727,9 @@ const INITIAL_KB = {
             <div ref={roiImgRef}
               onWheel={(e) => onViewerWheel("L", e, navSlice)}
               style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomL.scale > 1 ? (panning ? "grabbing" : "grab") : "crosshair", userSelect: "none" }}
-              onMouseDown={(e) => { if (zoomL.scale > 1) onViewerPanStart("L", e); else roiMouseDown(e); }}
-              onMouseMove={(e) => { if (zoomL.scale <= 1) roiMouseMove(e); }}
-              onMouseUp={() => { if (zoomL.scale <= 1) roiMouseUp(); }}>
+              onMouseDown={(e) => { if (zoomL.scale > 1) onViewerPanStart("L", e); else { if (toolMode==="roi") roiMouseDown(e); else measureMouseDown(e); } }}
+              onMouseMove={(e) => { if (zoomL.scale <= 1) { if (toolMode==="roi") roiMouseMove(e); else measureMouseMove(e); } }}
+              onMouseUp={() => { if (zoomL.scale <= 1) { if (toolMode==="roi") roiMouseUp(); else measureMouseUp(); } }}>
               {im[splitIdx] ? (
                 <img src={im[splitIdx].data} alt="" draggable={false}
                   style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", transform: `translate(${zoomL.x}px, ${zoomL.y}px) scale(${zoomL.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
@@ -1681,8 +1737,32 @@ const INITIAL_KB = {
               {roi && zoomL.scale <= 1 && (
                 <div style={{ position: "absolute", left: `${roi.x * 100}%`, top: `${roi.y * 100}%`, width: `${roi.w * 100}%`, height: `${roi.h * 100}%`, border: "2px solid #e0a93b", background: "rgba(224,169,59,.12)", borderRadius: 3, pointerEvents: "none", boxShadow: "0 0 0 9999px rgba(0,0,0,.35)" }} />
               )}
+              {/* Measurements Layer */}
+              {zoomL.scale <= 1 && (measurements.length > 0 || activeMeasure) && (
+                <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 10 }}>
+                  {measurements.map((m, i) => (
+                    <g key={i}>
+                      <line x1={`${m.startX*100}%`} y1={`${m.startY*100}%`} x2={`${m.endX*100}%`} y2={`${m.endY*100}%`} stroke="#e0a93b" strokeWidth="2" />
+                      <circle cx={`${m.startX*100}%`} cy={`${m.startY*100}%`} r="3" fill="#e0a93b" />
+                      <circle cx={`${m.endX*100}%`} cy={`${m.endY*100}%`} r="3" fill="#e0a93b" />
+                      <text x={`${(m.startX + m.endX)*50}%`} y={`${(m.startY + m.endY)*50}%`} fill="#fff" fontSize="12" fontWeight="600" style={{ textShadow: "1px 1px 2px #000, -1px -1px 2px #000" }} dx="5" dy="-5">
+                        {m.mm ? `${m.mm.toFixed(1)} mm` : `${Math.round(m.px)} px`}
+                      </text>
+                    </g>
+                  ))}
+                  {activeMeasure && (
+                    <line x1={`${activeMeasure.startX*100}%`} y1={`${activeMeasure.startY*100}%`} x2={`${activeMeasure.endX*100}%`} y2={`${activeMeasure.endY*100}%`} stroke="rgba(224,169,59,.6)" strokeWidth="2" strokeDasharray="4" />
+                  )}
+                </svg>
+              )}
+
             </div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "4px 0", flexWrap: "wrap" }}>
+              
+              <div style={{ display: "flex", gap: 2, marginRight: 8, background: "#1a1d24", borderRadius: 6, padding: 2 }}>
+                <button onClick={() => { setToolMode("roi"); setMeasurements([]); setActiveMeasure(null); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "roi" ? "rgba(74,163,223,.18)" : "transparent", color: toolMode === "roi" ? "#4aa3df" : "#8b919c", border: "none" }} title="Виділення (ROI)"><Crosshair size={12} /></button>
+                <button onClick={() => { setToolMode("measure"); setRoi(null); setRoiResult(null); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "measure" ? "rgba(224,169,59,.18)" : "transparent", color: toolMode === "measure" ? "#e0a93b" : "#8b919c", border: "none" }} title="Лінійка"><Activity size={12} /></button>
+              </div>
               <button disabled={splitIdx <= 0} onClick={() => navSlice(-1)} style={P.nv}><ChevronLeft size={14} /></button>
               <span style={{ fontSize: 10, color: "#8b919c", fontFamily: "'JetBrains Mono',monospace" }}>{im.length > 0 ? `${splitIdx + 1}/${im.length}` : "—"}</span>
               <button disabled={splitIdx >= im.length - 1} onClick={() => navSlice(1)} style={P.nv}><ChevronRight size={14} /></button>
