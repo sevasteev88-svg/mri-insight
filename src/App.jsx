@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import daikon from "daikon";
 import {
   Settings, Upload, Plus, ArrowLeft, X, Zap, Shield, Brain, BookOpen,
   Eye, ChevronRight, AlertCircle, CheckCircle, Mic, MicOff, Search,
@@ -426,7 +427,7 @@ export default function MRIInsight() {
   const [scr, setScr] = useState("dash");
   const [apiKey, setApiKey] = useState("");
   const [apiKeyIn, setApiKeyIn] = useState("");
-  const [aiModel, setAiModel] = useState("gemini-2.5-pro");
+  const [aiModel, setAiModel] = useState("gemini-2.5-flash");
   const [refs, setRefs] = useState({});
   const [atlas, setAtlas] = useState({}); // {zone: [{id, name, data, label}]}
   const [kb, setKb] = useState({}); // {zone: [{id, title, text}]}
@@ -552,15 +553,99 @@ export default function MRIInsight() {
   };
 
   const uploadImgs = async (files, target) => {
-    const list = Array.from(files).filter(f => f.type.startsWith("image/"));
+    // filter generic files, allow images and dicoms
+    const list = Array.from(files).filter(f => f.type.startsWith("image/") || f.name.toLowerCase().endsWith(".dcm") || f.name.toLowerCase().endsWith(".dicom") || f.type === "application/dicom" || f.type === "");
     for (const f of list) {
-      const d = await new Promise(r => { const fr = new FileReader(); fr.onload = e => r(e.target.result); fr.readAsDataURL(f); });
+      let d = null;
+      let detectedSeq = study?.activeSeq || "T2";
+      let detectedPlane = study?.activePlane || "Sag";
+
+      if (f.name.toLowerCase().endsWith(".dcm") || f.name.toLowerCase().endsWith(".dicom") || f.type === "application/dicom" || (!f.type.startsWith("image/") && !f.type.startsWith("video/"))) {
+        try {
+          const buf = await f.arrayBuffer();
+          const data = new DataView(buf);
+          const image = daikon.Series.parseImage(data);
+          if (image) {
+            // -- Metadata Detection --
+            if (target === "patient") {
+              const descTag = image.getTag(0x0008, 0x103e);
+              const desc = (descTag && descTag.value && descTag.value[0]) ? descTag.value[0].toString().toLowerCase() : "";
+              
+              if (desc.includes("t2") || desc.includes("t 2")) detectedSeq = "T2";
+              else if (desc.includes("t1") || desc.includes("t 1")) detectedSeq = "T1";
+              else if (desc.includes("stir")) detectedSeq = "STIR";
+              else if (desc.includes("pd")) {
+                if (desc.includes("fs") || desc.includes("fat")) detectedSeq = "PD Fat Sat";
+                else detectedSeq = "PD";
+              }
+
+              if (desc.includes("sag")) detectedPlane = "Sag";
+              else if (desc.includes("cor")) detectedPlane = "Cor";
+              else if (desc.includes("ax") || desc.includes("tra")) detectedPlane = "Ax";
+              else {
+                const oriTag = image.getTag(0x0020, 0x0037);
+                if (oriTag && oriTag.value && oriTag.value.length === 6) {
+                  const [rx, ry, rz, cx, cy, cz] = oriTag.value;
+                  const nx = Math.abs(ry * cz - rz * cy);
+                  const ny = Math.abs(rz * cx - rx * cz);
+                  const nz = Math.abs(rx * cy - ry * cx);
+                  const max = Math.max(nx, ny, nz);
+                  if (max === nx) detectedPlane = "Sag";
+                  else if (max === ny) detectedPlane = "Cor";
+                  else if (max === nz) detectedPlane = "Ax";
+                }
+              }
+            }
+            // -- End Metadata Detection --
+
+            const rawData = image.getInterpretedData();
+            const c = document.createElement("canvas");
+            c.width = image.getCols();
+            c.height = image.getRows();
+            const ctx = c.getContext("2d");
+            const imgData = ctx.createImageData(c.width, c.height);
+            let min = Infinity, max = -Infinity;
+            for(let i=0; i<rawData.length; i++) {
+              if(rawData[i] < min) min = rawData[i];
+              if(rawData[i] > max) max = rawData[i];
+            }
+            let wc = image.getWindowCenter();
+            let ww = image.getWindowWidth();
+            if (Array.isArray(wc)) wc = wc[0];
+            if (Array.isArray(ww)) ww = ww[0];
+            
+            if (!wc || !ww) {
+                wc = (max + min)/2;
+                ww = (max - min);
+            }
+            const minP = wc - ww/2;
+            const maxP = wc + ww/2;
+            for(let i=0; i<rawData.length; i++) {
+              let val = rawData[i];
+              let n = ((val - minP) / ww) * 255;
+              if (n < 0) n = 0; if (n > 255) n = 255;
+              const idx = i * 4;
+              imgData.data[idx] = n; imgData.data[idx+1] = n; imgData.data[idx+2] = n; imgData.data[idx+3] = 255;
+            }
+            ctx.putImageData(imgData, 0, 0);
+            d = c.toDataURL("image/jpeg", 0.9);
+          }
+        } catch(e) { console.error("DICOM err:", e); }
+      }
+      
+      if (!d) {
+        d = await new Promise(r => { const fr = new FileReader(); fr.onload = e => r(e.target.result); fr.readAsDataURL(f); });
+      }
+
       const fin = (target === "patient" && anon) ? await anonymizeImage(d) : d;
       const obj = { id: Date.now() + Math.random(), name: f.name, data: fin, ts: Date.now() };
       if (target === "ref") setRefs(p => ({ ...p, [selZone]: [...(p[selZone] || []), obj] }));
-      else { const k = `${study.activeSeq}_${study.activePlane}`; setStudy(p => ({ ...p, series: { ...p.series, [k]: [...(p.series[k] || []), obj] } })); }
+      else { 
+        const k = `${detectedSeq}_${detectedPlane}`; 
+        setStudy(p => ({ ...p, series: { ...p.series, [k]: [...(p.series[k] || []), obj] } })); 
+      }
     }
-    if (target === "patient" && anon && list.length > 0) flash(`Анонімізовано ${list.length} зображень`);
+    if (target === "patient" && anon && list.length > 0) flash(`Анонімізовано та завантажено ${list.length} зображень`);
   };
 
   const uploadPdf = async (file) => {
@@ -1218,7 +1303,7 @@ export default function MRIInsight() {
           <div><div style={{ fontSize: 15, fontWeight: 500, color: "#e8eaed" }}>MRI Insight</div><p style={P.sub}>RADIOLOGY WORKSTATION</p></div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 11, color: "#4aa3df", background: "#15324a", padding: "4px 10px", borderRadius: 4, fontFamily: "'JetBrains Mono',monospace" }}>{aiModel === "gemini-2.5-pro" ? "GEMINI 2.5 PRO" : "GEMINI 2.5 FLASH"}</span>
+          <span style={{ fontSize: 11, color: "#4aa3df", background: "#15324a", padding: "4px 10px", borderRadius: 4, fontFamily: "'JetBrains Mono',monospace" }}>{aiModel === "gemini-3.1-pro-preview" ? "GEMINI 3.1 PRO" : "GEMINI 2.5 FLASH"}</span>
           <button onClick={() => setShowSet(true)} style={P.iBtn}><Settings size={18} /></button>
         </div>
       </div>
@@ -1306,7 +1391,7 @@ export default function MRIInsight() {
         {libTab === "refs" ? (<>
           {/* REFS TAB */}
           <div style={P.upRow}>
-            <div style={P.upC} onClick={() => refIn.current?.click()}><Upload size={20} style={{ color: "#06b6d4" }} /><span style={P.upL}>JPEG знімки</span><input ref={refIn} type="file" multiple accept="image/*" style={{ display: "none" }} onChange={e => uploadImgs(e.target.files, "ref")} /></div>
+            <div style={P.upC} onClick={() => refIn.current?.click()}><Upload size={20} style={{ color: "#06b6d4" }} /><span style={P.upL}>JPEG / DICOM</span><input ref={refIn} type="file" multiple accept="image/*,.dcm,.dicom" style={{ display: "none" }} onChange={e => uploadImgs(e.target.files, "ref")} /></div>
             <div style={{ ...P.upC, opacity: pdfOk ? 1 : 0.4 }} onClick={() => pdfOk && pdfIn.current?.click()}><FileText size={20} style={{ color: "#a78bfa" }} /><span style={P.upL}>PDF книга</span><input ref={pdfIn} type="file" accept="application/pdf" style={{ display: "none" }} onChange={e => e.target.files[0] && uploadPdf(e.target.files[0])} /></div>
             <div style={P.upC} onClick={() => flash("Скопіюйте зображення та натисніть Ctrl+V")}><span style={{ fontSize: 20 }}>📋</span><span style={P.upL}>Вставити</span></div>
           </div>
@@ -1330,7 +1415,7 @@ export default function MRIInsight() {
           </div>
           <div style={P.upRow}>
             <div style={P.upC} onClick={() => atlasIn.current?.click()}><Upload size={20} style={{ color: "#a78bfa" }} /><span style={P.upL}>Додати зображення</span>
-              <input ref={atlasIn} type="file" multiple accept="image/*" style={{ display: "none" }} onChange={async (e) => {
+              <input ref={atlasIn} type="file" multiple accept="image/*,.dcm,.dicom" style={{ display: "none" }} onChange={async (e) => {
                 const files = Array.from(e.target.files).filter(f => f.type.startsWith("image/"));
                 for (const f of files) {
                   const d = await new Promise(r => { const fr = new FileReader(); fr.onload = ev => r(ev.target.result); fr.readAsDataURL(f); });
@@ -1501,8 +1586,8 @@ export default function MRIInsight() {
 
         <label style={P.lb}>Знімки {study?.activeSeq} {study?.activePlane} ({ci.length})</label>
         <div style={P.drop} onClick={() => patIn.current?.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadImgs(e.dataTransfer.files, "patient"); }}>
-          <Upload size={24} style={{ color: "#475569" }} /><p style={{ fontSize: 13, color: "#64748b", marginTop: 6 }}>Завантажте JPEG зрізи для {study?.activeSeq} {PLANE_LABELS[study?.activePlane]}</p>
-          <input ref={patIn} type="file" multiple accept="image/*" style={{ display: "none" }} onChange={e => uploadImgs(e.target.files, "patient")} /></div>
+          <Upload size={24} style={{ color: "#475569" }} /><p style={{ fontSize: 13, color: "#64748b", marginTop: 6 }}>Завантажте JPEG або DICOM зрізи для {study?.activeSeq} {PLANE_LABELS[study?.activePlane]}</p>
+          <input ref={patIn} type="file" multiple accept="image/*,.dcm,.dicom" style={{ display: "none" }} onChange={e => uploadImgs(e.target.files, "patient")} /></div>
 
         {ci.length > 0 && <>
           <div style={P.iGrid}>{ci.map((im, i) => <div key={im.id} style={P.thBox}>
@@ -1616,7 +1701,7 @@ export default function MRIInsight() {
               onMouseUp={() => { if (zoomL.scale <= 1) roiMouseUp(); }}>
               {im[splitIdx] ? (
                 <img src={im[splitIdx].data} alt="" draggable={false}
-                  style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", transform: `translate(${zoomL.x}px, ${zoomL.y}px) scale(${zoomL.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
+                  style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", transform: `translate(${zoomL.x}px, ${zoomL.y}px) scale(${zoomL.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
               ) : <span style={{ color: "#3a3f47" }}>—</span>}
               {roi && zoomL.scale <= 1 && (
                 <div style={{ position: "absolute", left: `${roi.x * 100}%`, top: `${roi.y * 100}%`, width: `${roi.w * 100}%`, height: `${roi.h * 100}%`, border: "2px solid #e0a93b", background: "rgba(224,169,59,.12)", borderRadius: 3, pointerEvents: "none", boxShadow: "0 0 0 9999px rgba(0,0,0,.35)" }} />
@@ -1668,7 +1753,7 @@ export default function MRIInsight() {
                   onMouseDown={(e) => { if (zoomR.scale > 1) onViewerPanStart("R", e); }}>
                   {refImgs[refIdx] ? (
                     <img src={refImgs[refIdx].data} alt="" draggable={false}
-                      style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", transform: `translate(${zoomR.x}px, ${zoomR.y}px) scale(${zoomR.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
+                      style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", transform: `translate(${zoomR.x}px, ${zoomR.y}px) scale(${zoomR.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
                   ) : <span style={{ color: "#3a3f47", fontSize: 12 }}>{refSource === "atlas" ? "Немає атласу" : "Немає референсів"}</span>}
                   {refImgs[refIdx]?.label && <span style={{ position: "absolute", bottom: 4, left: 4, right: 4, background: "rgba(0,0,0,.8)", color: "#e8eaed", fontSize: 10, padding: "3px 6px", borderRadius: 4, lineHeight: 1.3 }}>{refImgs[refIdx].label}</span>}
                 </div>
