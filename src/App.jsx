@@ -240,44 +240,6 @@ const RADIO_MAP = {
   "міозит": "myositis MRI", "фасціїт": "fasciitis MRI",
 };
 
-const SYS_PROMPT = `You are an expert musculoskeletal radiologist with 20+ years of experience, assisting a sports medicine physician. Your goal is MAXIMUM diagnostic accuracy.
-
-You receive: 1) REFERENCE normal MRI images, 2) optional ATLAS/knowledge-base rules, 3) PATIENT MRI series (possibly multiple sequences and planes), 4) optional clinical context.
-
-ANALYSIS METHOD — think step by step (chain-of-thought):
-STEP 1 — Orientation: For each series identify the sequence (T1/T2/STIR/PD) and plane (sagittal/coronal/axial). Note what each sequence is best for (T2/STIR = fluid/edema, T1 = anatomy/fat/marrow, PD = cartilage/menisci).
-STEP 2 — Systematic review: Examine EACH anatomical structure relevant to the zone, one by one. Compare each with the normal reference.
-STEP 3 — Signal analysis: For each abnormality assess signal intensity across sequences (a true lesion appears consistently across sequences; artifacts do not).
-STEP 4 — Correlate: Cross-check findings between planes and sequences. A real finding is visible on multiple slices/sequences.
-STEP 5 — Differential: For each significant finding, give the MOST LIKELY diagnosis plus 1-2 alternatives with relative likelihood.
-STEP 6 — Confidence: Rate confidence honestly. High (85-100) only if clearly visible on multiple sequences. Medium (60-84) if suggestive. Low (<60) if subtle/single-sequence.
-
-RULES:
-- Respond ONLY in valid JSON, ALL text in Ukrainian
-- Be specific: location, size estimate (small/moderate/large), signal characteristics
-- Distinguish acute vs chronic when possible
-- If a different sequence/plane would help confirm, say so in pulse_sequence_hint
-- Do NOT invent findings. If normal, say so. False positives are as harmful as false negatives.
-
-JSON:
-{
-  "reading_steps": "Короткий опис того, що ти послідовно перевірив (1-2 речення)",
-  "findings": [{
-    "id":1,
-    "structure":"Анатомічна структура",
-    "description":"Детальний опис: локалізація, розмір, характер сигналу на різних послідовностях",
-    "slices":"T2_Sag: 3-5",
-    "differential":[{"diagnosis":"Найімовірніший діагноз","likelihood":"висока"},{"diagnosis":"Альтернатива","likelihood":"низька"}],
-    "confidence_level":85,
-    "severity":"normal|mild|moderate|severe",
-    "acuity":"гострий|хронічний|невизначено",
-    "pulse_sequence_hint":"optional"
-  }],
-  "summary":"Структурований висновок",
-  "recommendation":"Клінічна рекомендація — додаткові дослідження, консультації",
-  "radiopaedia_terms":["ACL tear","bone marrow edema"]
-}
-Empty findings array if completely normal.`;
 
 function anonymizeImage(dataUrl, crop = 12) {
   return new Promise(res => {
@@ -500,6 +462,13 @@ export default function MRIInsight() {
     return () => document.removeEventListener("paste", handler);
   }, [scr, selZone, libTab]);
 
+
+const INITIAL_KB = {
+  c_spine: [{ id: "c_spine_1", title: "Класифікація гриж дисків", text: "Протрузія: ширина основи більша за випинання.\nЕкструзія: випинання більше за основу.\nСеквестр: відокремлений фрагмент.\nОцінюйте вплив на дуральний мішок та корінці." }],
+  l_spine: [{ id: "l_spine_1", title: "Дегенерація за Modic", text: "Modic I: набряк (T1 гіпо, T2 гіпер).\nModic II: жирова дегенерація (T1 гіпер, T2 гіпер/ізо).\nModic III: склероз (T1 гіпо, T2 гіпо)." }],
+  shoulder: [{ id: "shoulder_1", title: "Обертальна манжета", text: "Супраспінатус — найчастіша локалізація розривів. Оцінюйте: частковий (суглобова/бурсальна поверхня) чи повношаровий. Звертайте увагу на ретракцію м'яза та жирову атрофію (за Goutallier)." }]
+};
+
   useEffect(() => {
     if (!window.pdfjsLib) {
       const s = document.createElement("script");
@@ -522,7 +491,12 @@ export default function MRIInsight() {
         });
         if (Object.keys(r).length > 0) setRefs(r);
         if (Object.keys(a).length > 0) setAtlas(a);
-        if (Object.keys(k).length > 0) setKb(k);
+        const mergedKb = { ...INITIAL_KB };
+        Object.entries(k).forEach(([zone, entries]) => {
+          if (!mergedKb[zone]) mergedKb[zone] = [];
+          entries.forEach(e => { if (!mergedKb[zone].find(x => x.id === e.id)) mergedKb[zone].push(e); });
+        });
+        setKb(mergedKb);
       } catch {}
     })();
   }, []);
@@ -910,37 +884,7 @@ export default function MRIInsight() {
       if (!cropped) { flash("Занадто мала ділянка"); setRoiLoading(false); return; }
 
       const parts = [];
-      parts.push({ text: `Ти досвідчений анатом, який допомагає лікарю ОРІЄНТУВАТИСЯ на МРТ — визначити, яка анатомічна структура потрапила у виділену ділянку. Ти НЕ ставиш діагноз. Лікар сам вирішує про патологію, дивлячись на знімок. Твоє завдання — допомогти зрозуміти АНАТОМІЮ.
-
-ВАЖЛИВО — уникай типових помилок ідентифікації:
-- Не давай категоричної відповіді, якщо структуру важко відрізнити від сусідніх. Краще вкажи 2-3 кандидати.
-- Хрестоподібні зв'язки коліна (ПХЗ vs ЗХЗ) часто плутають. Щоб їх розрізнити, ОБОВ'ЯЗКОВО перевір: ПХЗ йде від ЗАДНЬОЇ частини медіальної поверхні латерального виростка стегна передньо-донизу до переднього міжвиросткового підвищення великогомілкової кістки. ЗХЗ йде від латеральної поверхні медіального виростка задньо-донизу. Орієнтуйся на точки прикріплення та напрямок волокон, а не на товщину.
-- М'язи задньої поверхні стегна і гомілки схожі між собою — розрізняй за взаємним розташуванням (медіально/латерально/глибоко/поверхнево).
-- Використовуй надані зображення з атласу як орієнтир.
-
-Зона зйомки: ${ZONES[study.zone]?.ua}
-Серія: ${seriesKey()} (послідовність та площина)
-Зріз: ${splitIdx + 1}
-
-Відповідай ТІЛЬКИ JSON українською:
-{
-  "candidates": [
-    {"structure":"Найімовірніша структура","reasoning":"Чому саме вона — за розташуванням, орієнтацією, точками прикріплення","id_confidence":75}
-  ],
-  "id_confidence_overall": 75,
-  "anatomy": {
-    "description":"Що це за структура (для найімовірнішого кандидата)",
-    "function":"Функція",
-    "origin":"Початок/проксимальне прикріплення",
-    "insertion":"Прикріплення/дистальне",
-    "innervation":"Іннервація (для м'язів)",
-    "typical_pathologies":"Які патології ТИПОВО трапляються тут (перелік, НЕ діагноз цього знімка)"
-  },
-  "what_to_check": "На що лікарю звернути увагу при оцінці цієї структури на МРТ — без вердикту, просто орієнтир (норма виглядає так-то; ознаки проблеми бувають такі)",
-  "uncertainty_note": "Чесно: що ускладнює ідентифікацію, з чим можна сплутати"
-}
-
-Дай 1-3 кандидати. id_confidence — наскільки впевнений що це САМЕ ЦЯ структура (0-100). Якщо структуру важко визначити — постав нижчу впевненість і додай більше кандидатів. Не вигадуй патологію — це робота лікаря.` });
+      parts.push({ text: getPromptRoi(ZONES[study.zone]?.group || "joints", ZONES[study.zone]?.ua || "Анатомія", seriesKey(), splitIdx + 1) });
 
       // Send atlas images (labeled anatomy references) — includes related detailed structures
       const zoneAtlas = collectZoneMaterials(atlas, study.zone);
@@ -998,24 +942,7 @@ export default function MRIInsight() {
     setRoiLoading(true);
     try {
       const parts = [];
-      parts.push({ text: `Ти — досвідчений рентгенолог. Користувач питає про анатомічну структуру: "${queryText}".
-Надай детальну інформацію про неї у форматі JSON.
-{
-  "candidates": [
-    {"structure":"${queryText}","reasoning":"Ручний запит","id_confidence":100}
-  ],
-  "id_confidence_overall": 100,
-  "anatomy": {
-    "description":"Що це за структура",
-    "function":"Функція",
-    "origin":"Початок/проксимальне прикріплення (якщо є)",
-    "insertion":"Прикріплення/дистальне (якщо є)",
-    "innervation":"Іннервація (якщо є)",
-    "typical_pathologies":"Які патології ТИПОВО трапляються тут"
-  },
-  "what_to_check": "На що лікарю звернути увагу при оцінці цієї структури на МРТ",
-  "uncertainty_note": ""
-}` });
+      parts.push({ text: getPromptManual(ZONES[study?.zone]?.group || "joints", queryText) });
 
       const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -2240,4 +2167,101 @@ const P = {
   refPan: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.1)", borderRadius: 10, padding: 16, width: "95%", maxWidth: 800, maxHeight: "84vh", overflowY: "auto", position: "relative" },
   toast: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", background: "#1d6ea8", color: "#fff", padding: "8px 18px", borderRadius: 6, fontSize: 12, fontWeight: 500, zIndex: 200, boxShadow: "0 4px 16px rgba(0,0,0,.4)" },
 };
+
+const getSystemRole = (group) => {
+  if (group === "spine") return "an expert musculoskeletal and neuroradiologist specializing in the spine";
+  if (group === "head") return "an expert neuroradiologist";
+  return "an expert musculoskeletal radiologist";
+};
+
+const getAnatomySchema = (group) => {
+  if (group === "spine") return `
+    "description":"Що це за структура",
+    "function":"Функція/роль",
+    "segment_level":"Типовий рівень/локалізація (якщо застосовно)",
+    "nerve_relation":"Відношення до нервових структур (корінці, дуральний мішок)",
+    "typical_pathologies":"Типові патології (грижі, стенози, остеофіти і т.д.)"`;
+  if (group === "head") return `
+    "description":"Що це за структура",
+    "function":"Функція/роль",
+    "lobe_region":"Частка/регіон",
+    "blood_supply":"Кровопостачання (басейн, якщо застосовно)",
+    "typical_pathologies":"Типові патології (ішемія, пухлини, демієлінізація і т.д.)"`;
+  return `
+    "description":"Що це за структура",
+    "function":"Функція",
+    "origin":"Початок/проксимальне прикріплення (якщо є)",
+    "insertion":"Прикріплення/дистальне (якщо є)",
+    "innervation":"Іннервація (якщо є)",
+    "typical_pathologies":"Які патології ТИПОВО трапляються тут"`;
+};
+
+const getSysPromptAnalyze = (zoneGroup) => `You are ${getSystemRole(zoneGroup)} with 20+ years of experience. Your goal is MAXIMUM diagnostic accuracy.
+
+You receive: 1) REFERENCE normal MRI images, 2) optional ATLAS/knowledge-base rules, 3) PATIENT MRI series, 4) optional clinical context.
+
+ANALYSIS METHOD - think step by step:
+STEP 1 - Orientation: Identify sequence & plane.
+STEP 2 - Systematic review: Examine EACH anatomical structure relevant to the zone.
+STEP 3 - Signal analysis: Assess signal intensity across sequences.
+STEP 4 - Correlate: Cross-check findings between planes.
+STEP 5 - Differential: Give MOST LIKELY diagnosis plus alternatives.
+STEP 6 - Confidence: Rate honestly (High/Medium/Low).
+
+RULES:
+- Respond ONLY in valid JSON, ALL text in Ukrainian
+- Be specific: location, size, signal characteristics
+- Distinguish acute vs chronic when possible
+- Do NOT invent findings.
+
+JSON:
+{
+  "reading_steps": "Кроки аналізу",
+  "findings": [{
+    "id":1,
+    "structure":"Назва",
+    "description":"Опис",
+    "slices":"T2_Sag: 3-5",
+    "differential":[{"diagnosis":"Діагноз","likelihood":"Висока"}],
+    "confidence_level":85,
+    "severity":"normal|mild|moderate|severe",
+    "acuity":"гострий|хронічний|неясно"
+  }],
+  "overall_impression":"Загальний висновок"
+}`;
+
+const getPromptRoi = (zoneGroup, zoneName, seriesName, sliceNum) => `Ти — ${getSystemRole(zoneGroup)}. 
+Ти отримуєш знімок МРТ (повний та вирізаний шматок), а також референси.
+Опиши виділену анатомічну структуру на знімку.
+
+Зона: ${zoneName}
+Серія: ${seriesName}
+Зріз: ${sliceNum}
+
+Відповідай ТІЛЬКИ JSON:
+{
+  "candidates": [
+    {"structure":"Назва структури","reasoning":"Чому саме вона","id_confidence":75}
+  ],
+  "id_confidence_overall": 75,
+  "anatomy": {${getAnatomySchema(zoneGroup)}
+  },
+  "what_to_check": "На що звернути увагу при оцінці (ознаки норми/патології)",
+  "uncertainty_note": "Що ускладнює ідентифікацію"
+}`;
+
+const getPromptManual = (zoneGroup, queryText) => `Ти — ${getSystemRole(zoneGroup)}. Користувач питає про структуру: "${queryText}".
+Надай детальну інформацію про неї у форматі JSON.
+{
+  "candidates": [
+    {"structure":"${queryText}","reasoning":"Ручний запит","id_confidence":100}
+  ],
+  "id_confidence_overall": 100,
+  "anatomy": {${getAnatomySchema(zoneGroup)}
+  },
+  "what_to_check": "На що звернути увагу при оцінці на МРТ",
+  "uncertainty_note": ""
+}`;
+
+
 
