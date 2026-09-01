@@ -5,11 +5,11 @@ import {
   Eye, ChevronRight, AlertCircle, CheckCircle, Mic, MicOff, Search,
   EyeOff, Columns, FileText, Check, ExternalLink, ChevronLeft,
   Volume2, Square, Info, Archive, Trash2, RotateCcw, Paperclip, Crosshair
-, Activity, Sun, Clipboard, Download, Ruler, TriangleRight} from "lucide-react";
+, Activity, Sun, Clipboard, Download, Ruler, TriangleRight, Folder, User} from "lucide-react";
 
 // ═══════════ IndexedDB HELPERS ═══════════
 const DB_NAME = "mri-insight-db";
-const DB_VER = 4;
+const DB_VER = 5;
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -19,6 +19,7 @@ function openDB() {
       if (!db.objectStoreNames.contains("refs")) db.createObjectStore("refs");
       if (!db.objectStoreNames.contains("studies")) db.createObjectStore("studies");
       if (!db.objectStoreNames.contains("corrections")) db.createObjectStore("corrections");
+      if (!db.objectStoreNames.contains("archive")) db.createObjectStore("archive");
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -388,6 +389,10 @@ function RadioScreen({ setScr }) {
 export default function MRIInsight() {
   const [scr, setScr] = useState("dash");
   const [apiKey, setApiKey] = useState("");
+  const [archiveHandle, setArchiveHandle] = useState(null);
+  const [archiveStatus, setArchiveStatus] = useState("none"); // none, prompt, ready
+  const [archivePatients, setArchivePatients] = useState([]);
+  const [archiveLoading, setArchiveLoading] = useState(false);
   const [apiKeyIn, setApiKeyIn] = useState("");
   const [aiModel, setAiModel] = useState("gemini-2.5-flash");
   const [refs, setRefs] = useState({});
