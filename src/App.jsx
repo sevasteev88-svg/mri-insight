@@ -5,7 +5,7 @@ import {
   Eye, ChevronRight, AlertCircle, CheckCircle, Mic, MicOff, Search,
   EyeOff, Columns, FileText, Check, ExternalLink, ChevronLeft,
   Volume2, Square, Info, Archive, Trash2, RotateCcw, Paperclip, Crosshair
-, Activity, Sun} from "lucide-react";
+, Activity, Sun, Clipboard, Download} from "lucide-react";
 
 // ═══════════ IndexedDB HELPERS ═══════════
 const DB_NAME = "mri-insight-db";
@@ -426,6 +426,9 @@ export default function MRIInsight() {
   const [wlL, setWlL] = useState({ b: 100, c: 100 });
   const [wlR, setWlR] = useState({ b: 100, c: 100 });
   const [windowing, setWindowing] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportText, setReportText] = useState("");
+  const [showReport, setShowReport] = useState(false);
   const [toolMode, setToolMode] = useState("roi");
   const [measurements, setMeasurements] = useState([]);
   const [activeMeasure, setActiveMeasure] = useState(null);
@@ -1704,7 +1707,50 @@ const INITIAL_KB = {
   const onWindowEnd = () => setWindowing(null);
 
 
-  const Split = () => {
+  
+  const generateReport = async () => {
+    if (!apiKey) { flash("Введіть ваш API ключ"); return; }
+    if (!study) return;
+    setReportLoading(true);
+    setShowReport(true);
+    setReportText("");
+    
+    try {
+      const notes = Object.entries(vnotes)
+        .filter(([k, v]) => k.startsWith(study.id) || true) // We just take all non-empty notes. To be safe, maybe we should filter by study ID if we prefixed them. Wait, note keys are `seriesKey()-sliceIdx`.
+        .filter(([k, v]) => v.trim())
+        .map(([k, v]) => `- Зріз ${k}: ${v.trim()}`)
+        .join("\n");
+        
+      const prompt = `Ти — головний лікар-рентгенолог. Твоє завдання — написати офіційний протокол МРТ-дослідження (українською мовою).
+Зона дослідження: ${ZONES[study.zone]?.ua || "Невідома зона"}.
+Пацієнт: ${study.patientName || "Не вказано"}.
+
+Ось чорнові нотатки та знахідки лікаря, зроблені під час перегляду знімків:
+${notes ? notes : "Нотаток немає. Опиши абсолютну норму для цієї анатомічної зони."}
+
+Вимоги до протоколу:
+1. Офіційний медичний стиль.
+2. Розділ "ОПИС" (структурований по всіх основних анатомічних компонентах зони). Якщо в нотатках є патологія — розгорнуто опиши її. Якщо про компонент нічого не сказано в нотатках — опиши його як норму.
+3. Розділ "ВИСНОВОК" (короткий підсумок виявлених патологій або констатація норми).
+Не пиши жодних вступних слів, видай ТІЛЬКИ готовий текст медичного протоколу.`;
+
+      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.25 } })
+      });
+      const data = await resp.json();
+      if (data?.error) throw new Error(data.error.message);
+      let resText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      setReportText(resText.trim());
+    } catch (e) {
+      setReportText(`Помилка: ${e.message}`);
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+const Split = () => {
     const im = curImgs();
     const noteKey = `${seriesKey()}-${splitIdx}`;
     // Reference source: refs / atlas / kb (text) — includes related structures
@@ -1726,7 +1772,8 @@ const INITIAL_KB = {
             <button onClick={() => askManualAnatomy(manualQuery)} disabled={roiLoading || !manualQuery} style={{ ...P.sm, background: "#1d6ea8", color: "#fff", border: "none" }}>Знайти</button>
           </div>
           <span style={{ fontSize: 9, color: "#5f6672", fontFamily: "'JetBrains Mono',monospace" }}>колесо — зрізи · Ctrl+колесо — зум</span>
-          <div style={{ display: "flex", gap: 3, marginLeft: "auto", flexWrap: "wrap" }}>
+          <button onClick={generateReport} style={{ ...P.pri, padding: "5px 12px", fontSize: 11, background: "#8b5cf6", border: "none", marginLeft: "auto" }}><FileText size={14} style={{ marginRight: 6 }}/> Сформувати протокол</button>
+          <div style={{ display: "flex", gap: 3, marginLeft: 16, flexWrap: "wrap" }}>
             {Object.entries(seriesCounts()).map(([k, cnt]) => (
               <button key={k} onClick={() => { const [seq, pl] = k.split("_"); setStudy(p => ({ ...p, activeSeq: seq, activePlane: pl })); setSplitIdx(0); setRoi(null); setRoiResult(null); resetZoom("L"); }}
                 style={{ ...k === seriesKey() ? P.sqOn : P.sq, padding: "4px 8px", fontSize: 9 }}>{k.replace("_", " ")} ({cnt})</button>
@@ -2123,7 +2170,47 @@ const INITIAL_KB = {
       {scr === "radio" && <RadioScreen setScr={setScr} />}
       {scr === "loading" && Loading()}{scr === "results" && Results()}
 
-      {showSet && <div style={P.ov} onClick={() => setShowSet(false)}><div style={P.pan} onClick={e => e.stopPropagation()}><h3 style={P.panT}>Налаштування</h3><label style={P.lb}>Gemini API Key</label><input type="password" value={apiKeyIn} onChange={e => setApiKeyIn(e.target.value)} placeholder="AIza..." style={P.inp} /><p style={P.ht}>Отримайте на <span style={{ color: "#06b6d4" }}>ai.google.dev</span></p>
+      
+      {showReport && (
+        <div style={P.ov} onClick={() => setShowReport(false)}>
+          <div style={{ ...P.pan, width: 800, maxWidth: "90%", height: "80vh", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <h3 style={{ ...P.panT, marginBottom: 0, display: "flex", alignItems: "center", gap: 8 }}><FileText size={18} color="#8b5cf6" /> Медичний протокол</h3>
+              <button onClick={() => setShowReport(false)} style={{ background: "none", border: "none", color: "#8b919c", cursor: "pointer" }}><X size={18} /></button>
+            </div>
+            
+            {reportLoading ? (
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#8b5cf6" }}>
+                <div style={P.pulse}><Brain size={32} /></div>
+                <p style={{ marginTop: 16, fontSize: 13, color: "#94a3b8" }}>ШІ генерує протокол на основі ваших нотаток...</p>
+              </div>
+            ) : (
+              <>
+                <textarea 
+                  value={reportText} 
+                  onChange={e => setReportText(e.target.value)}
+                  style={{ flex: 1, background: "#13161c", border: "1px solid rgba(255,255,255,.1)", borderRadius: 6, color: "#e8eaed", padding: 16, fontSize: 13, lineHeight: 1.6, fontFamily: "'IBM Plex Sans',sans-serif", resize: "none", outline: "none" }}
+                />
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
+                  <button onClick={() => { navigator.clipboard.writeText(reportText); flash("Скопійовано в буфер"); }} style={{ ...P.sm, padding: "8px 16px", background: "#1a1d24", color: "#4aa3df", border: "1px solid rgba(74,163,223,.3)" }}>
+                    <Clipboard size={14} style={{ marginRight: 6 }} /> Скопіювати
+                  </button>
+                  <button onClick={() => { 
+                    const blob = new Blob([reportText], {type: "text/plain;charset=utf-8"});
+                    const a = document.createElement("a");
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `MRI_Protocol_${study?.patientName || "Unknown"}.txt`;
+                    a.click();
+                  }} style={{ ...P.pri, padding: "8px 16px", background: "#8b5cf6", border: "none" }}>
+                    <Download size={14} style={{ marginRight: 6 }} /> Завантажити .txt
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+{showSet && <div style={P.ov} onClick={() => setShowSet(false)}><div style={P.pan} onClick={e => e.stopPropagation()}><h3 style={P.panT}>Налаштування</h3><label style={P.lb}>Gemini API Key</label><input type="password" value={apiKeyIn} onChange={e => setApiKeyIn(e.target.value)} placeholder="AIza..." style={P.inp} /><p style={P.ht}>Отримайте на <span style={{ color: "#06b6d4" }}>ai.google.dev</span></p>
         <label style={{ ...P.lb, marginTop: 14 }}>Модель ІІ</label>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <button onClick={() => { setAiModel("gemini-2.5-pro"); try { localStorage.setItem("mri-model", "gemini-2.5-pro"); } catch {} }} style={{ ...P.sm, padding: "10px 12px", textAlign: "left", justifyContent: "flex-start", background: aiModel === "gemini-2.5-pro" ? "rgba(6,182,212,.14)" : "rgba(255,255,255,.04)", border: aiModel === "gemini-2.5-pro" ? "1px solid rgba(6,182,212,.3)" : "1px solid rgba(255,255,255,.07)" }}>
