@@ -433,6 +433,8 @@ export default function MRIInsight() {
   const [reportLoading, setReportLoading] = useState(false);
   const [reportText, setReportText] = useState("");
   const [showReport, setShowReport] = useState(false);
+  const [aiMarkers, setAiMarkers] = useState({});
+  const [aiScanning, setAiScanning] = useState(false);
   const [toolMode, setToolMode] = useState("roi");
   const [measurements, setMeasurements] = useState([]);
   const [activeMeasure, setActiveMeasure] = useState(null);
@@ -1762,7 +1764,55 @@ const Split = () => {
       : refSource === "atlas" ? collectZoneMaterials(atlas, study?.zone) : [];
     const kbEntries = collectZoneMaterials(kb, study?.zone);
     
+    
+    const scanSeries = async () => {
+      if (!apiKey) return flash("Введіть API ключ!");
+      if (im.length === 0) return;
+      setAiScanning(true);
+      setAiMarkers({});
+      
+      try {
+        const parts = [
+          { text: `Ти — ШІ-асистент рентгенолога. Проаналізуй цю МРТ серію (Зона: ${ZONES[study.zone]?.ua || "Невідома"}). 
+Я передаю тобі ${im.length} зрізів по порядку. Твоє завдання: знайти зрізи з ознаками патології.
+Поверни ТІЛЬКИ валідний JSON-масив у форматі: [{"slice": 3, "finding": "Опис проблеми"}, ...]. Якщо патологій немає, поверни []. Важливо: відлік зрізів починається з 0, ігноруй артефакти руху, шукай реальні патології.` }
+        ];
+        
+        for (let i = 0; i < im.length; i++) {
+          parts.push({ text: `Зріз ${i}:` });
+          parts.push({
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: im[i].data.split(",")[1]
+            }
+          });
+        }
+
+        const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.1 } })
+        });
+        
+        const data = await resp.json();
+        if (data?.error) throw new Error(data.error.message);
+        let resText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+        resText = resText.replace(/```json/g, "").replace(/```/g, "").trim();
+        const parsed = JSON.parse(resText);
+        
+        const markers = {};
+        parsed.forEach(p => { if (p.slice !== undefined) markers[p.slice] = p.finding; });
+        setAiMarkers(markers);
+        flash(`Сканування завершено: знайдено ${Object.keys(markers).length} підозр.`);
+      } catch (e) {
+        console.error("Scan error:", e);
+        flash("Помилка сканування: " + e.message);
+      } finally {
+        setAiScanning(false);
+      }
+    };
+
     const compImgs = (rightMode === "compare" && compareSeriesKey && study?.series[compareSeriesKey]) || [];
+
     const navSlice = (dir) => { 
       setSplitIdx(p => {
         const nextL = Math.max(0, Math.min(im.length - 1, p + dir));
@@ -1803,7 +1853,7 @@ const Split = () => {
           <button onClick={generateReport} style={{ ...P.pri, padding: "5px 12px", fontSize: 11, background: "#8b5cf6", border: "none", marginLeft: "auto" }}><FileText size={14} style={{ marginRight: 6 }}/> Сформувати протокол</button>
           <div style={{ display: "flex", gap: 3, marginLeft: 16, flexWrap: "wrap" }}>
             {Object.entries(seriesCounts()).map(([k, cnt]) => (
-              <button key={k} onClick={() => { const [seq, pl] = k.split("_"); setStudy(p => ({ ...p, activeSeq: seq, activePlane: pl })); setSplitIdx(0); setRoi(null); setRoiResult(null); resetZoom("L"); }}
+              <button key={k} onClick={() => { const [seq, pl] = k.split("_"); setStudy(p => ({ ...p, activeSeq: seq, activePlane: pl })); setSplitIdx(0); setRoi(null); setRoiResult(null); resetZoom("L"); setAiMarkers({}); }}
                 style={{ ...k === seriesKey() ? P.sqOn : P.sq, padding: "4px 8px", fontSize: 9 }}>{k.replace("_", " ")} ({cnt})</button>
             ))}
           </div>
@@ -1861,9 +1911,22 @@ const Split = () => {
                 <button onClick={() => { setToolMode("measure"); setRoi(null); setRoiResult(null); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "measure" ? "rgba(224,169,59,.18)" : "transparent", color: toolMode === "measure" ? "#e0a93b" : "#8b919c", border: "none" }} title="Лінійка"><Activity size={12} /></button>
                 <button onClick={() => { setToolMode("window"); setRoi(null); setRoiResult(null); setMeasurements([]); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "window" ? "rgba(74,163,223,.18)" : "transparent", color: toolMode === "window" ? "#4aa3df" : "#8b919c", border: "none" }} title="Контраст (W/L)"><Sun size={12} /></button>
               </div>
+              <button onClick={scanSeries} disabled={aiScanning || im.length===0} style={{ ...P.sm, padding: "4px 8px", background: "rgba(139,92,246,.18)", color: "#8b5cf6", border: "none", marginRight: 8 }}>
+                {aiScanning ? "Сканування..." : "✨ AI Скан"}
+              </button>
               <button disabled={splitIdx <= 0} onClick={() => navSlice(-1)} style={P.nv}><ChevronLeft size={14} /></button>
-              <span style={{ fontSize: 10, color: "#8b919c", fontFamily: "'JetBrains Mono',monospace" }}>{im.length > 0 ? `${splitIdx + 1}/${im.length}` : "—"}</span>
+              
+              {/* Timeline Bar */}
+              <div style={{ width: 100, height: 4, background: "#1a1d24", position: "relative", borderRadius: 2, margin: "0 6px" }}>
+                {Object.keys(aiMarkers).map(idx => (
+                   <div key={idx} style={{ position: "absolute", left: `${(Number(idx) / Math.max(1, im.length - 1)) * 100}%`, top: -2, width: 8, height: 8, borderRadius: "50%", background: "#e24b4a", cursor: "pointer", transform: "translateX(-50%)" }} onClick={() => { setSplitIdx(Number(idx)); setMeasurements([]); setRoi(null); }} title={aiMarkers[idx]} />
+                ))}
+                <div style={{ position: "absolute", left: `${(splitIdx / Math.max(1, im.length - 1)) * 100}%`, top: -1, width: 6, height: 6, borderRadius: "50%", background: "#4aa3df", transform: "translateX(-50%)", pointerEvents: "none", transition: "left 0.1s" }} />
+              </div>
+
+              <span style={{ fontSize: 10, color: "#8b919c", fontFamily: "'JetBrains Mono',monospace" }}>{im.length > 0 ? `${splitIdx + 1}/${im.length}` : "-"}</span>
               <button disabled={splitIdx >= im.length - 1} onClick={() => navSlice(1)} style={P.nv}><ChevronRight size={14} /></button>
+              
               <button onClick={() => recording === noteKey ? stopVoice() : startVoice(noteKey)} style={{ ...P.sm, marginLeft: 4, background: recording === noteKey ? "rgba(226,75,74,.18)" : "#1a1d24", color: recording === noteKey ? "#e24b4a" : "#8b919c" }}>{recording === noteKey ? <MicOff size={11} /> : <Mic size={11} />}</button>
               {roi && roi.w > 0.02 && zoomL.scale <= 1 && (
                 <button onClick={analyzeRoi} disabled={roiLoading} style={{ ...P.sm, padding: "4px 12px", background: "rgba(224,169,59,.14)", border: "0.5px solid rgba(224,169,59,.3)", color: "#e0a93b" }}>
@@ -1873,6 +1936,12 @@ const Split = () => {
               {roi && <button onClick={() => { setRoi(null); setRoiResult(null); }} style={{ ...P.sm, padding: "4px 8px", color: "#8b919c" }}><X size={12} /></button>}
             </div>
             {!roi && zoomL.scale <= 1 && <p style={{ fontSize: 9, color: "#5f6672", textAlign: "center" }}>Виділіть мишкою структуру — ІІ допоможе визначити що це</p>}
+            {aiMarkers[splitIdx] && zoomL.scale <= 1 && (
+               <div style={{ background: "rgba(226,75,74,.15)", border: "1px solid rgba(226,75,74,.3)", color: "#e24b4a", padding: "6px 10px", borderRadius: 6, fontSize: 11, marginTop: 4, display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
+                 <Brain size={12} /> AI Підозра: {aiMarkers[splitIdx]}
+               </div>
+            )}
+        
             {zoomL.scale > 1 && <p style={{ fontSize: 9, color: "#5f6672", textAlign: "center" }}>Перетягуйте для переміщення · Ctrl+колесо для зуму</p>}
           </div>
 
