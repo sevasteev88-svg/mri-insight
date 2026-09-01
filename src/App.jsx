@@ -5,7 +5,7 @@ import {
   Eye, ChevronRight, AlertCircle, CheckCircle, Mic, MicOff, Search,
   EyeOff, Columns, FileText, Check, ExternalLink, ChevronLeft,
   Volume2, Square, Info, Archive, Trash2, RotateCcw, Paperclip, Crosshair
-, Activity} from "lucide-react";
+, Activity, Sun} from "lucide-react";
 
 // ═══════════ IndexedDB HELPERS ═══════════
 const DB_NAME = "mri-insight-db";
@@ -423,6 +423,9 @@ export default function MRIInsight() {
   const [manualQuery, setManualQuery] = useState("");
   // Viewer zoom/pan state — separate for patient (L) and reference (R) panels
   const [zoomL, setZoomL] = useState({ scale: 1, x: 0, y: 0 });
+  const [wlL, setWlL] = useState({ b: 100, c: 100 });
+  const [wlR, setWlR] = useState({ b: 100, c: 100 });
+  const [windowing, setWindowing] = useState(null);
   const [toolMode, setToolMode] = useState("roi");
   const [measurements, setMeasurements] = useState([]);
   const [activeMeasure, setActiveMeasure] = useState(null);
@@ -1682,6 +1685,25 @@ const INITIAL_KB = {
   };
   const onViewerPanEnd = () => setPanning(null);
 
+  const onWindowStart = (side, e) => {
+    e.preventDefault();
+    const orig = side === "L" ? wlL : wlR;
+    setWindowing({ side, startX: e.clientX, startY: e.clientY, origB: orig.b, origC: orig.c });
+  };
+  
+  const onWindowMove = (e) => {
+    if (!windowing) return;
+    const deltaX = e.clientX - windowing.startX;
+    const deltaY = e.clientY - windowing.startY;
+    const newB = Math.max(10, Math.min(400, windowing.origB - deltaY * 0.7));
+    const newC = Math.max(10, Math.min(400, windowing.origC + deltaX * 0.7));
+    if (windowing.side === "L") setWlL({ b: newB, c: newC });
+    else setWlR({ b: newB, c: newC });
+  };
+  
+  const onWindowEnd = () => setWindowing(null);
+
+
   const Split = () => {
     const im = curImgs();
     const noteKey = `${seriesKey()}-${splitIdx}`;
@@ -1694,7 +1716,7 @@ const INITIAL_KB = {
 
     return (
       <div style={{ padding: "8px 12px 12px", color: "#e8eaed", fontFamily: "'IBM Plex Sans',sans-serif" }}
-        onMouseMove={onViewerPanMove} onMouseUp={onViewerPanEnd} onMouseLeave={onViewerPanEnd}>
+        onMouseMove={(e) => { onViewerPanMove(e); onWindowMove(e); }} onMouseUp={() => { onViewerPanEnd(); onWindowEnd(); }} onMouseLeave={() => { onViewerPanEnd(); onWindowEnd(); }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <button onClick={() => { setScr(prevScr); setRoi(null); setRoiResult(null); resetZoom("L"); resetZoom("R"); }} style={P.bk}><ArrowLeft size={16} /> Назад</button>
           <span style={{ fontSize: 14, fontWeight: 500, color: "#e8eaed" }}>Роздільний перегляд</span>
@@ -1727,12 +1749,12 @@ const INITIAL_KB = {
             <div ref={roiImgRef}
               onWheel={(e) => onViewerWheel("L", e, navSlice)}
               style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomL.scale > 1 ? (panning ? "grabbing" : "grab") : "crosshair", userSelect: "none" }}
-              onMouseDown={(e) => { if (zoomL.scale > 1) onViewerPanStart("L", e); else { if (toolMode==="roi") roiMouseDown(e); else measureMouseDown(e); } }}
-              onMouseMove={(e) => { if (zoomL.scale <= 1) { if (toolMode==="roi") roiMouseMove(e); else measureMouseMove(e); } }}
+              onContextMenu={(e)=>e.preventDefault()} onMouseDown={(e) => { if (e.button === 2) { onWindowStart("L", e); return; } if (zoomL.scale > 1) onViewerPanStart("L", e); else { if (toolMode==="roi") roiMouseDown(e); else if (toolMode==="measure") measureMouseDown(e); else onWindowStart("L", e); } }}
+              onMouseMove={(e) => { if (zoomL.scale <= 1) { if (toolMode==="roi") roiMouseMove(e); else if (toolMode==="measure") measureMouseMove(e); } }}
               onMouseUp={() => { if (zoomL.scale <= 1) { if (toolMode==="roi") roiMouseUp(); else measureMouseUp(); } }}>
               {im[splitIdx] ? (
                 <img src={im[splitIdx].data} alt="" draggable={false}
-                  style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", transform: `translate(${zoomL.x}px, ${zoomL.y}px) scale(${zoomL.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
+                  style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", filter: `brightness(${wlL.b}%) contrast(${wlL.c}%)`, transform: `translate(${zoomL.x}px, ${zoomL.y}px) scale(${zoomL.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
               ) : <span style={{ color: "#3a3f47" }}>—</span>}
               {roi && zoomL.scale <= 1 && (
                 <div style={{ position: "absolute", left: `${roi.x * 100}%`, top: `${roi.y * 100}%`, width: `${roi.w * 100}%`, height: `${roi.h * 100}%`, border: "2px solid #e0a93b", background: "rgba(224,169,59,.12)", borderRadius: 3, pointerEvents: "none", boxShadow: "0 0 0 9999px rgba(0,0,0,.35)" }} />
@@ -1762,6 +1784,7 @@ const INITIAL_KB = {
               <div style={{ display: "flex", gap: 2, marginRight: 8, background: "#1a1d24", borderRadius: 6, padding: 2 }}>
                 <button onClick={() => { setToolMode("roi"); setMeasurements([]); setActiveMeasure(null); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "roi" ? "rgba(74,163,223,.18)" : "transparent", color: toolMode === "roi" ? "#4aa3df" : "#8b919c", border: "none" }} title="Виділення (ROI)"><Crosshair size={12} /></button>
                 <button onClick={() => { setToolMode("measure"); setRoi(null); setRoiResult(null); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "measure" ? "rgba(224,169,59,.18)" : "transparent", color: toolMode === "measure" ? "#e0a93b" : "#8b919c", border: "none" }} title="Лінійка"><Activity size={12} /></button>
+                <button onClick={() => { setToolMode("window"); setRoi(null); setRoiResult(null); setMeasurements([]); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "window" ? "rgba(74,163,223,.18)" : "transparent", color: toolMode === "window" ? "#4aa3df" : "#8b919c", border: "none" }} title="Контраст (W/L)"><Sun size={12} /></button>
               </div>
               <button disabled={splitIdx <= 0} onClick={() => navSlice(-1)} style={P.nv}><ChevronLeft size={14} /></button>
               <span style={{ fontSize: 10, color: "#8b919c", fontFamily: "'JetBrains Mono',monospace" }}>{im.length > 0 ? `${splitIdx + 1}/${im.length}` : "—"}</span>
@@ -1805,10 +1828,10 @@ const INITIAL_KB = {
               <>
                 <div onWheel={(e) => onViewerWheel("R", e, navRef)}
                   style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomR.scale > 1 ? (panning ? "grabbing" : "grab") : "default", userSelect: "none" }}
-                  onMouseDown={(e) => { if (zoomR.scale > 1) onViewerPanStart("R", e); }}>
+                  onContextMenu={(e)=>e.preventDefault()} onMouseDown={(e) => { if (e.button === 2) { onWindowStart("R", e); return; } if (zoomR.scale > 1) onViewerPanStart("R", e); }}>
                   {refImgs[refIdx] ? (
                     <img src={refImgs[refIdx].data} alt="" draggable={false}
-                      style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", transform: `translate(${zoomR.x}px, ${zoomR.y}px) scale(${zoomR.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
+                      style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", filter: `brightness(${wlR.b}%) contrast(${wlR.c}%)`, transform: `translate(${zoomR.x}px, ${zoomR.y}px) scale(${zoomR.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
                   ) : <span style={{ color: "#3a3f47", fontSize: 12 }}>{refSource === "atlas" ? "Немає атласу" : "Немає референсів"}</span>}
                   {refImgs[refIdx]?.label && <span style={{ position: "absolute", bottom: 4, left: 4, right: 4, background: "rgba(0,0,0,.8)", color: "#e8eaed", fontSize: 10, padding: "3px 6px", borderRadius: 4, lineHeight: 1.3 }}>{refImgs[refIdx].label}</span>}
                 </div>
