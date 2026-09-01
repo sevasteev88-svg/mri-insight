@@ -458,6 +458,7 @@ export default function MRIInsight() {
   const [roiStart, setRoiStart] = useState(null);
   const [roiResult, setRoiResult] = useState(null);
   const [roiLoading, setRoiLoading] = useState(false);
+  const [manualQuery, setManualQuery] = useState("");
   // Viewer zoom/pan state — separate for patient (L) and reference (R) panels
   const [zoomL, setZoomL] = useState({ scale: 1, x: 0, y: 0 });
   const [zoomR, setZoomR] = useState({ scale: 1, x: 0, y: 0 });
@@ -985,6 +986,47 @@ export default function MRIInsight() {
       const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const clean = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       try { setRoiResult(JSON.parse(clean)); } catch { setRoiResult({ candidates: [{ structure: "Не вдалося розпарсити", reasoning: clean, id_confidence: 0 }], id_confidence_overall: 0, anatomy: {}, what_to_check: "", uncertainty_note: "" }); }
+    } catch (err) {
+      flash(`Помилка: ${err.message}`);
+    } finally {
+      setRoiLoading(false);
+    }
+  };
+
+  const askManualAnatomy = async (queryText) => {
+    if (!apiKey || !queryText.trim()) return;
+    setRoiLoading(true);
+    try {
+      const parts = [];
+      parts.push({ text: `Ти — досвідчений рентгенолог. Користувач питає про анатомічну структуру: "${queryText}".
+Надай детальну інформацію про неї у форматі JSON.
+{
+  "candidates": [
+    {"structure":"${queryText}","reasoning":"Ручний запит","id_confidence":100}
+  ],
+  "id_confidence_overall": 100,
+  "anatomy": {
+    "description":"Що це за структура",
+    "function":"Функція",
+    "origin":"Початок/проксимальне прикріплення (якщо є)",
+    "insertion":"Прикріплення/дистальне (якщо є)",
+    "innervation":"Іннервація (якщо є)",
+    "typical_pathologies":"Які патології ТИПОВО трапляються тут"
+  },
+  "what_to_check": "На що лікарю звернути увагу при оцінці цієї структури на МРТ",
+  "uncertainty_note": ""
+}` });
+
+      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.15, maxOutputTokens: 2000 } })
+      });
+      const data = await resp.json();
+      if (data?.error) throw new Error(data.error.message);
+      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const clean = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      setRoiResult(JSON.parse(clean));
+      setManualQuery("");
     } catch (err) {
       flash(`Помилка: ${err.message}`);
     } finally {
@@ -1672,7 +1714,12 @@ export default function MRIInsight() {
         onMouseMove={onViewerPanMove} onMouseUp={onViewerPanEnd} onMouseLeave={onViewerPanEnd}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <button onClick={() => { setScr(prevScr); setRoi(null); setRoiResult(null); resetZoom("L"); resetZoom("R"); }} style={P.bk}><ArrowLeft size={16} /> Назад</button>
-          <span style={{ fontSize: 14, fontWeight: 500, color: "#e8eaed" }}>Порівняння</span>
+          <span style={{ fontSize: 14, fontWeight: 500, color: "#e8eaed" }}>Роздільний перегляд</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 16 }}>
+            <Search size={14} color="#8b919c" />
+            <input type="text" value={manualQuery} onChange={(e) => setManualQuery(e.target.value)} onKeyDown={(e) => { if(e.key === "Enter") askManualAnatomy(manualQuery); }} placeholder="Введіть назву структури..." style={{ ...P.inp, padding: "4px 8px", fontSize: 11, width: 220, background: "#1a1d24" }} />
+            <button onClick={() => askManualAnatomy(manualQuery)} disabled={roiLoading || !manualQuery} style={{ ...P.sm, background: "#1d6ea8", color: "#fff", border: "none" }}>Знайти</button>
+          </div>
           <span style={{ fontSize: 9, color: "#5f6672", fontFamily: "'JetBrains Mono',monospace" }}>колесо — зрізи · Ctrl+колесо — зум</span>
           <div style={{ display: "flex", gap: 3, marginLeft: "auto", flexWrap: "wrap" }}>
             {Object.entries(seriesCounts()).map(([k, cnt]) => (
@@ -1681,7 +1728,8 @@ export default function MRIInsight() {
             ))}
           </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: roiResult ? "1fr 1fr 300px" : "1fr 1fr", gap: 6, height: "calc(100vh - 80px)" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, height: "calc(100vh - 80px)" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, flex: roiResult ? "0 0 55vh" : 1 }}>
           {/* PATIENT with ROI + zoom */}
           <div style={{ background: "#0f1217", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px 3px" }}>
@@ -1767,6 +1815,7 @@ export default function MRIInsight() {
               </>
             )}
           </div>
+          </div>
           {/* ROI RESULT PANEL — ORIENTATION MODE */}
           {roiResult && (() => {
             const cands = roiResult.candidates || [];
@@ -1774,7 +1823,7 @@ export default function MRIInsight() {
             const confColorVal = idConf >= 80 ? "#4ec99b" : idConf >= 60 ? "#e0a93b" : "#e24b4a";
             const anat = roiResult.anatomy || {};
             return (
-              <div style={{ background: "#13161c", border: "0.5px solid rgba(224,169,59,.18)", borderRadius: 8, padding: 12, overflowY: "auto" }}>
+              <div style={{ background: "#13161c", border: "0.5px solid rgba(224,169,59,.18)", borderRadius: 8, padding: 12, overflowY: "auto", flex: 1 }}>
                 <h4 style={{ fontSize: 13, fontWeight: 500, color: "#e0a93b", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}><Crosshair size={14} /> Орієнтація — що це за структура</h4>
                 <p style={{ fontSize: 10, color: "#5f6672", marginBottom: 10, lineHeight: 1.4 }}>ІІ допомагає визначити анатомію. Рішення про патологію — за лікарем.</p>
 
@@ -2156,7 +2205,7 @@ const P = {
   secBtn: { width: "100%", background: "#13161c", border: "0.5px solid rgba(155,140,219,.3)", borderRadius: 8, padding: 11, fontSize: 13, fontWeight: 500, color: "#9b8cdb", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: "'IBM Plex Sans',sans-serif", marginBottom: 7 },
   spPan: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.07)", borderRadius: 8, padding: 8, textAlign: "center" },
   spLb: { fontSize: 11, fontWeight: 500, color: "#8b919c", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".3px", fontFamily: "'JetBrains Mono',monospace" },
-  spImg: { width: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: 6, cursor: "pointer", border: "0.5px solid rgba(255,255,255,.06)" },
+  spImg: { width: "100%", height: "100%", objectFit: "contain", borderRadius: 6, cursor: "pointer", border: "0.5px solid rgba(255,255,255,.06)" },
   spE: { height: 300, display: "flex", alignItems: "center", justifyContent: "center", color: "#3a3f47", fontSize: 12, background: "#0f1217", borderRadius: 6 },
   spNav: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 4 },
   nv: { background: "#1a1d24", border: "0.5px solid rgba(255,255,255,.08)", borderRadius: 5, padding: "4px 8px", color: "#8b919c", cursor: "pointer" },
@@ -2191,3 +2240,4 @@ const P = {
   refPan: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.1)", borderRadius: 10, padding: 16, width: "95%", maxWidth: 800, maxHeight: "84vh", overflowY: "auto", position: "relative" },
   toast: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", background: "#1d6ea8", color: "#fff", padding: "8px 18px", borderRadius: 6, fontSize: 12, fontWeight: 500, zIndex: 200, boxShadow: "0 4px 16px rgba(0,0,0,.4)" },
 };
+
