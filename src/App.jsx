@@ -426,6 +426,10 @@ export default function MRIInsight() {
   const [wlL, setWlL] = useState({ b: 100, c: 100 });
   const [wlR, setWlR] = useState({ b: 100, c: 100 });
   const [windowing, setWindowing] = useState(null);
+  const [rightMode, setRightMode] = useState("ref");
+  const [compareSeriesKey, setCompareSeriesKey] = useState(null);
+  const [compareIdx, setCompareIdx] = useState(0);
+  const [syncScroll, setSyncScroll] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportText, setReportText] = useState("");
   const [showReport, setShowReport] = useState(false);
@@ -1757,7 +1761,31 @@ const Split = () => {
     const refImgs = refSource === "refs" ? collectZoneMaterials(refs, study?.zone)
       : refSource === "atlas" ? collectZoneMaterials(atlas, study?.zone) : [];
     const kbEntries = collectZoneMaterials(kb, study?.zone);
-    const navSlice = (dir) => { setSplitIdx(p => Math.max(0, Math.min(im.length - 1, p + dir))); setRoi(null); setRoiResult(null); setMeasurements([]); };
+    
+    const compImgs = (rightMode === "compare" && compareSeriesKey && study?.series[compareSeriesKey]) || [];
+    const navSlice = (dir) => { 
+      setSplitIdx(p => {
+        const nextL = Math.max(0, Math.min(im.length - 1, p + dir));
+        if (syncScroll && compImgs.length > 0) {
+          const pct = nextL / Math.max(1, im.length - 1);
+          setCompareIdx(Math.round(pct * (compImgs.length - 1)));
+        }
+        return nextL;
+      }); 
+      setRoi(null); setRoiResult(null); setMeasurements([]); 
+    };
+    const navCompare = (dir) => {
+      setCompareIdx(p => {
+        const nextR = Math.max(0, Math.min(compImgs.length - 1, p + dir));
+        if (syncScroll && im.length > 0) {
+          const pct = nextR / Math.max(1, compImgs.length - 1);
+          setSplitIdx(Math.round(pct * (im.length - 1)));
+          setRoi(null); setRoiResult(null); setMeasurements([]); 
+        }
+        return nextR;
+      });
+    };
+
     const navRef = (dir) => setRefIdx(p => Math.max(0, Math.min(refImgs.length - 1, p + dir)));
 
     return (
@@ -1848,45 +1876,91 @@ const Split = () => {
             {zoomL.scale > 1 && <p style={{ fontSize: 9, color: "#5f6672", textAlign: "center" }}>Перетягуйте для переміщення · Ctrl+колесо для зуму</p>}
           </div>
 
-          {/* REFERENCE with source toggle + zoom */}
+          {/* RIGHT PANEL: REFERENCE OR COMPARE */}
           <div style={{ background: "#0f1217", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px 4px", gap: 6 }}>
+            
+            {/* Top Toggle: Mode */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px 4px", gap: 6, borderBottom: "1px solid rgba(255,255,255,0.05)", marginBottom: 4 }}>
               <div style={{ display: "flex", gap: 3 }}>
-                {[["refs", "Референси"], ["atlas", "Атлас"], ["kb", "База знань"]].map(([k, lbl]) => {
-                  const cnt = k === "refs" ? collectZoneMaterials(refs, study?.zone).length : k === "atlas" ? collectZoneMaterials(atlas, study?.zone).length : kbEntries.length;
-                  return <button key={k} onClick={() => { setRefSource(k); setRefIdx(0); resetZoom("R"); }}
-                    style={{ ...refSource === k ? P.sqOn : P.sq, padding: "3px 8px", fontSize: 9 }}>{lbl} ({cnt})</button>;
-                })}
+                <button onClick={() => { setRightMode("ref"); resetZoom("R"); }} style={{ ...(rightMode === "ref" ? P.sqOn : P.sq), padding: "4px 10px", fontSize: 10, fontWeight: 500 }}>Довідники</button>
+                <button onClick={() => { setRightMode("compare"); resetZoom("R"); if(!compareSeriesKey) setCompareSeriesKey(Object.keys(study?.series || {})[0]); }} style={{ ...(rightMode === "compare" ? P.sqOn : P.sq), padding: "4px 10px", fontSize: 10, fontWeight: 500 }}>Порівняння</button>
               </div>
-              {refSource !== "kb" && zoomR.scale > 1 && <button onClick={() => resetZoom("R")} style={{ ...P.sm, padding: "2px 6px", fontSize: 9 }}>{zoomR.scale.toFixed(1)}× ✕</button>}
+              {rightMode === "compare" && (
+                <button onClick={() => setSyncScroll(!syncScroll)} style={{ ...P.sm, padding: "4px 8px", background: syncScroll ? "rgba(74,163,223,.18)" : "transparent", color: syncScroll ? "#4aa3df" : "#8b919c", border: "none" }} title="Синхронізувати прокрутку">
+                  <Link size={12} />
+                </button>
+              )}
             </div>
 
-            {refSource === "kb" ? (
-              <div style={{ flex: 1, overflowY: "auto", padding: 4 }}>
-                {kbEntries.length === 0 ? <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#3a3f47", fontSize: 12 }}>Немає правил для цієї зони</div>
-                  : kbEntries.map((e, i) => (
-                    <div key={i} style={{ background: "#13161c", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 6, padding: 10, marginBottom: 6 }}>
-                      <h4 style={{ fontSize: 12, fontWeight: 500, color: "#e0a93b", marginBottom: 5 }}>{e.title}</h4>
-                      <p style={{ fontSize: 11, color: "#c4c9d0", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{e.text}</p>
-                    </div>
-                  ))}
-              </div>
-            ) : (
+            {rightMode === "ref" ? (
               <>
-                <div onWheel={(e) => onViewerWheel("R", e, navRef)}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px 4px", gap: 6 }}>
+                  <div style={{ display: "flex", gap: 3 }}>
+                    {[["refs", "Нотатки"], ["atlas", "Атлас"], ["kb", "База знань"]].map(([k, lbl]) => {
+                      const cnt = k === "refs" ? collectZoneMaterials(refs, study?.zone).length : k === "atlas" ? collectZoneMaterials(atlas, study?.zone).length : kbEntries.length;
+                      return <button key={k} onClick={() => { setRefSource(k); setRefIdx(0); resetZoom("R"); }}
+                        style={{ ...refSource === k ? P.sqOn : P.sq, padding: "3px 8px", fontSize: 9 }}>{lbl} ({cnt})</button>;
+                    })}
+                  </div>
+                  {refSource !== "kb" && zoomR.scale > 1 && <button onClick={() => resetZoom("R")} style={{ ...P.sm, padding: "2px 6px", fontSize: 9 }}>{zoomR.scale.toFixed(1)}x</button>}
+                </div>
+
+                {refSource === "kb" ? (
+                  <div style={{ flex: 1, overflowY: "auto", padding: 4 }}>
+                    {kbEntries.length === 0 ? <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#3a3f47", fontSize: 12 }}>Немає даних для цієї зони</div>
+                      : kbEntries.map((e, i) => (
+                        <div key={i} style={{ background: "#13161c", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 6, padding: 10, marginBottom: 6 }}>
+                          <h4 style={{ fontSize: 12, fontWeight: 500, color: "#e0a93b", marginBottom: 5 }}>{e.title}</h4>
+                          <p style={{ fontSize: 11, color: "#c4c9d0", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{e.text}</p>
+                        </div>
+                      ))}
+                  </div>
+                ) : (
+                  <>
+                    <div onWheel={(e) => onViewerWheel("R", e, navRef)}
+                      style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomR.scale > 1 ? (panning ? "grabbing" : "grab") : "default", userSelect: "none" }}
+                      onContextMenu={(e)=>e.preventDefault()} onMouseDown={(e) => { if (e.button === 2) { onWindowStart("R", e); return; } if (zoomR.scale > 1) onViewerPanStart("R", e); }}>
+                      {refImgs[refIdx] ? (
+                        <img src={refImgs[refIdx].data} alt="" draggable={false}
+                          style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", filter: `brightness(${wlR.b}%) contrast(${wlR.c}%)`, transform: `translate(${zoomR.x}px, ${zoomR.y}px) scale(${zoomR.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
+                      ) : <span style={{ color: "#3a3f47", fontSize: 12 }}>{refSource === "atlas" ? "Пустий атлас" : "Немає матеріалів"}</span>}
+                      {refImgs[refIdx]?.label && <span style={{ position: "absolute", bottom: 4, left: 4, right: 4, background: "rgba(0,0,0,.8)", color: "#e8eaed", fontSize: 10, padding: "3px 6px", borderRadius: 4, lineHeight: 1.3 }}>{refImgs[refIdx].label}</span>}
+                    </div>
+                    {refImgs.length > 0 && (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "4px 0" }}>
+                        <button disabled={refIdx <= 0} onClick={() => navRef(-1)} style={P.nv}><ChevronLeft size={14} /></button>
+                        <span style={{ fontSize: 10, color: "#8b919c", fontFamily: "'JetBrains Mono',monospace" }}>{refIdx + 1}/{refImgs.length}</span>
+                        <button disabled={refIdx >= refImgs.length - 1} onClick={() => navRef(1)} style={P.nv}><ChevronRight size={14} /></button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
+            ) : (
+              /* COMPARE MODE */
+              <>
+                <div style={{ display: "flex", gap: 3, flexWrap: "wrap", padding: "0 4px 4px" }}>
+                  {Object.entries(seriesCounts()).map(([k, cnt]) => (
+                    <button key={k} onClick={() => { setCompareSeriesKey(k); setCompareIdx(0); resetZoom("R"); }}
+                      style={{ ...k === compareSeriesKey ? P.sqOn : P.sq, padding: "3px 8px", fontSize: 9 }}>{k.replace("_", " ")} ({cnt})</button>
+                  ))}
+                  {zoomR.scale > 1 && <button onClick={() => resetZoom("R")} style={{ ...P.sm, padding: "2px 6px", fontSize: 9, marginLeft: "auto" }}>{zoomR.scale.toFixed(1)}x</button>}
+                  {(wlR.b !== 100 || wlR.c !== 100) && <button onClick={() => setWlR({b:100, c:100})} style={{ ...P.sm, padding: "2px 6px", fontSize: 9, color: "#e0a93b", marginLeft: "auto" }}>W/L</button>}
+                </div>
+                
+                <div onWheel={(e) => onViewerWheel("R", e, navCompare)}
                   style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomR.scale > 1 ? (panning ? "grabbing" : "grab") : "default", userSelect: "none" }}
                   onContextMenu={(e)=>e.preventDefault()} onMouseDown={(e) => { if (e.button === 2) { onWindowStart("R", e); return; } if (zoomR.scale > 1) onViewerPanStart("R", e); }}>
-                  {refImgs[refIdx] ? (
-                    <img src={refImgs[refIdx].data} alt="" draggable={false}
+                  {compImgs[compareIdx] ? (
+                    <img src={compImgs[compareIdx].data} alt="" draggable={false}
                       style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", filter: `brightness(${wlR.b}%) contrast(${wlR.c}%)`, transform: `translate(${zoomR.x}px, ${zoomR.y}px) scale(${zoomR.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
-                  ) : <span style={{ color: "#3a3f47", fontSize: 12 }}>{refSource === "atlas" ? "Немає атласу" : "Немає референсів"}</span>}
-                  {refImgs[refIdx]?.label && <span style={{ position: "absolute", bottom: 4, left: 4, right: 4, background: "rgba(0,0,0,.8)", color: "#e8eaed", fontSize: 10, padding: "3px 6px", borderRadius: 4, lineHeight: 1.3 }}>{refImgs[refIdx].label}</span>}
+                  ) : <span style={{ color: "#3a3f47", fontSize: 12 }}>Виберіть серію</span>}
                 </div>
-                {refImgs.length > 0 && (
+                {compImgs.length > 0 && (
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "4px 0" }}>
-                    <button disabled={refIdx <= 0} onClick={() => navRef(-1)} style={P.nv}><ChevronLeft size={14} /></button>
-                    <span style={{ fontSize: 10, color: "#8b919c", fontFamily: "'JetBrains Mono',monospace" }}>{refIdx + 1}/{refImgs.length}</span>
-                    <button disabled={refIdx >= refImgs.length - 1} onClick={() => navRef(1)} style={P.nv}><ChevronRight size={14} /></button>
+                    <button disabled={compareIdx <= 0} onClick={() => navCompare(-1)} style={P.nv}><ChevronLeft size={14} /></button>
+                    <span style={{ fontSize: 10, color: "#8b919c", fontFamily: "'JetBrains Mono',monospace" }}>{compareIdx + 1}/{compImgs.length}</span>
+                    <button disabled={compareIdx >= compImgs.length - 1} onClick={() => navCompare(1)} style={P.nv}><ChevronRight size={14} /></button>
                   </div>
                 )}
               </>
