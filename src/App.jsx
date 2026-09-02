@@ -1412,6 +1412,46 @@ const INITIAL_KB = {
         <button onClick={() => setScr("lib")} style={P.act}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><BookOpen size={18} style={{ color: "#9b8cdb" }} /><span style={P.aLb}>Бібліотека</span></div><span style={{ fontSize: 11, color: "#5f6672" }}>Норми · атлас · база знань</span></button>
         <button onClick={() => setScr("radio")} style={P.act}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><ExternalLink size={18} style={{ color: "#4ec99b" }} /><span style={P.aLb}>Radiopaedia</span></div><span style={{ fontSize: 11, color: "#5f6672" }}>Довідник патологій</span></button>
       </div>
+      <div style={{ border: "1px solid rgba(255,255,255,0.06)", borderRadius: 12, background: "#0f1217", padding: "16px", marginTop: 16, marginBottom: 16, display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Folder size={18} color="#e0a93b" />
+            <h2 style={{ fontSize: 16, fontWeight: 500, color: "#e8eaed" }}>Локальний Архів PACS</h2>
+          </div>
+          {archiveStatus === "ready" && (
+            <button onClick={unlinkArchive} style={{ ...P.sm, padding: "4px 8px", color: "#e24b4a" }} title="Відв'язати"><X size={14} /></button>
+          )}
+        </div>
+
+        {archiveLoading ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#4aa3df", fontSize: 13, padding: "20px 0" }}>Завантаження пацієнта...</div>
+        ) : archiveStatus === "none" ? (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "10px 0" }}>
+            <p style={{ fontSize: 12, color: "#8b919c", marginBottom: 12 }}>Підключіть локальну папку (напр. D:\MRI_Archive).</p>
+            <button onClick={linkArchive} style={{ ...P.btn, background: "rgba(224,169,59,.15)", color: "#e0a93b", border: "1px solid rgba(224,169,59,.3)", padding: "8px 16px" }}>🔗 Прив'язати папку архіву</button>
+          </div>
+        ) : archiveStatus === "prompt" ? (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "10px 0" }}>
+            <p style={{ fontSize: 12, color: "#e24b4a", marginBottom: 12 }}>Браузер вимагає підтвердження доступу після перезапуску.</p>
+            <button onClick={restoreArchiveAccess} style={{ ...P.btn, background: "rgba(226,75,74,.15)", color: "#e24b4a", border: "1px solid rgba(226,75,74,.3)", padding: "8px 16px" }}>🔓 Надати доступ до {archiveHandle?.name || "архіву"}</button>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8, maxHeight: 200, overflowY: "auto", paddingRight: 4 }}>
+            {archivePatients.length === 0 ? (
+              <p style={{ fontSize: 12, color: "#5f6672", gridColumn: "1/-1", textAlign: "center", padding: "20px 0" }}>Папка порожня.</p>
+            ) : (
+              archivePatients.map(p => (
+                <div key={p.name} onClick={() => openPatientFromArchive(p)} style={{ background: "#1a1d24", padding: "10px 12px", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, border: "1px solid rgba(255,255,255,0.03)" }}>
+                  <User size={15} color="#8b919c" />
+                  <span style={{ fontSize: 13, color: "#c4c9d0", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name.replace(/_/g, " ")}</span>
+                  <ChevronRight size={14} color="#5f6672" />
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
       <p style={P.secT}>Бібліотека — покриття</p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 18 }}>
         {Object.entries(ZONE_GROUPS).map(([gk, gv]) => {
