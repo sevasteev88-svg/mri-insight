@@ -1775,7 +1775,7 @@ const INITIAL_KB = {
 
 
   
-  const generateReport = async () => {
+  const generateAiReport = async () => {
     if (!apiKey) { flash("Введіть ваш API ключ"); return; }
     if (!study) return;
     setReportLoading(true);
@@ -1911,7 +1911,7 @@ const Split = () => {
             <button onClick={() => askManualAnatomy(manualQuery)} disabled={roiLoading || !manualQuery} style={{ ...P.sm, background: "#1d6ea8", color: "#fff", border: "none" }}>Знайти</button>
           </div>
           <span style={{ fontSize: 9, color: "#5f6672", fontFamily: "'JetBrains Mono',monospace" }}>колесо — зрізи · Ctrl+колесо — зум</span>
-          <button onClick={generateReport} style={{ ...P.pri, padding: "5px 12px", fontSize: 11, background: "#8b5cf6", border: "none", marginLeft: "auto" }}><FileText size={14} style={{ marginRight: 6 }}/> Сформувати протокол</button>
+          <button onClick={generateAiReport} style={{ ...P.pri, padding: "5px 12px", fontSize: 11, background: "#8b5cf6", border: "none", marginLeft: "auto" }}><FileText size={14} style={{ marginRight: 6 }}/> Сформувати протокол</button>
           <div style={{ display: "flex", gap: 3, marginLeft: 16, flexWrap: "wrap" }}>
             {Object.entries(seriesCounts()).map(([k, cnt]) => (
               <button key={k} onClick={() => { const [seq, pl] = k.split("_"); setStudy(p => ({ ...p, activeSeq: seq, activePlane: pl })); setSplitIdx(0); setRoi(null); setRoiResult(null); resetZoom("L"); setAiMarkers({}); }}
