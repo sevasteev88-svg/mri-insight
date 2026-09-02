@@ -1393,6 +1393,79 @@ const INITIAL_KB = {
   );
 
 
+  
+  const loadArchive = async (handle) => {
+    try {
+      const patients = [];
+      for await (const entry of handle.values()) {
+        if (entry.kind === 'directory') patients.push(entry);
+      }
+      setArchivePatients(patients.sort((a,b) => a.name.localeCompare(b.name)));
+    } catch (e) { console.error(e); flash("Помилка читання архіву"); }
+  };
+
+  const linkArchive = async () => {
+    try {
+      const handle = await window.showDirectoryPicker({ mode: 'read' });
+      await dbPut("archive", "root_handle", handle);
+      setArchiveHandle(handle);
+      setArchiveStatus("ready");
+      loadArchive(handle);
+      flash("Архів успішно прив'язано");
+    } catch (e) { if (e.name !== 'AbortError') flash("Відмінено"); }
+  };
+
+  const restoreArchiveAccess = async () => {
+    if (!archiveHandle) return;
+    try {
+      const perm = await archiveHandle.requestPermission({ mode: 'read' });
+      if (perm === 'granted') {
+        setArchiveStatus("ready");
+        loadArchive(archiveHandle);
+      } else {
+        flash("Доступ не надано");
+      }
+    } catch (e) { flash("Помилка доступу"); }
+  };
+
+  const unlinkArchive = async () => {
+    try {
+      const db = await openDB();
+      db.transaction("archive", "readwrite").objectStore("archive").delete("root_handle");
+      setArchiveHandle(null);
+      setArchiveStatus("none");
+      setArchivePatients([]);
+      flash("Архів відв'язано");
+    } catch (e) {}
+  };
+
+  const getFilesRecursively = async (dirHandle) => {
+    let files = [];
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind === 'file') {
+        files.push(await entry.getFile());
+      } else if (entry.kind === 'directory') {
+        files.push(...await getFilesRecursively(entry));
+      }
+    }
+    return files;
+  };
+
+  const openPatientFromArchive = async (dirHandle) => {
+    setArchiveLoading(true);
+    try {
+      const files = await getFilesRecursively(dirHandle);
+      if (files.length === 0) { flash("Папка порожня"); return; }
+      await uploadImgs(files, "patient");
+      setScr("new"); // Jump to new study screen so they can choose zone
+    } catch (e) {
+      console.error(e);
+      flash("Помилка завантаження файлів");
+    } finally {
+      setArchiveLoading(false);
+    }
+  };
+
   const Dash = () => (
     <div style={P.pg}>
       <div style={P.hdr}>
