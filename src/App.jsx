@@ -558,6 +558,7 @@ const INITIAL_KB = {
       let detectedSeq = study?.activeSeq || "T2";
       let detectedPlane = study?.activePlane || "Sag";
       let ps = null;
+      let extractedName = null;
 
       if (f.name.toLowerCase().endsWith(".dcm") || f.name.toLowerCase().endsWith(".dicom") || f.type === "application/dicom" || (!f.type.startsWith("image/") && !f.type.startsWith("video/"))) {
         try {
@@ -595,6 +596,12 @@ const INITIAL_KB = {
                 }
               }
             }
+            
+              const pNameTag = image.getTag(0x0010, 0x0010);
+              if (pNameTag && pNameTag.value && pNameTag.value[0]) {
+                extractedName = pNameTag.value[0].toString().replace(/\^/g, " ").trim();
+              }
+
             // -- End Metadata Detection --
 
             const rawData = image.getInterpretedData();
@@ -649,7 +656,15 @@ const INITIAL_KB = {
       if (target === "ref") setRefs(p => ({ ...p, [selZone]: [...(p[selZone] || []), obj] }));
       else { 
         const k = `${detectedSeq}_${detectedPlane}`; 
-        setStudy(p => ({ ...p, series: { ...p.series, [k]: [...(p.series[k] || []), obj] } })); 
+        setStudy(p => {
+          let pName = p.patientName;
+          // If we found a real DICOM name, and current name is empty or just the folder name (doesn't contain the real name), overwrite it
+          if (extractedName && (!pName || pName !== extractedName)) {
+            // We overwrite it always with the real DICOM name if it differs, because folder name is just a placeholder
+            pName = extractedName;
+          }
+          return { ...p, patientName: pName, series: { ...p.series, [k]: [...(p.series[k] || []), obj] } };
+        }); 
       }
     }
     if (target === "patient" && anon && list.length > 0) flash(`Анонімізовано та завантажено ${list.length} зображень`);
