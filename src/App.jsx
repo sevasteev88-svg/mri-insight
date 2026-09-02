@@ -1456,8 +1456,20 @@ const INITIAL_KB = {
     try {
       const files = await getFilesRecursively(dirHandle);
       if (files.length === 0) { flash("Папка порожня"); return; }
+      
+      // Initialize study FIRST so that p.series exists when uploadImgs updates state
+      setStudy({ 
+        id: Date.now(), 
+        patientName: dirHandle.name.replace(/_/g, " "), 
+        age: "", complaints: "", mechanism: "", zone: "knee", 
+        activeSeq: "T2", activePlane: "Sag", 
+        series: {}, findings: null, status: "draft", 
+        date: new Date().toLocaleDateString("uk-UA") 
+      });
+      setVnotes({});
+      setScr("new");
+      
       await uploadImgs(files, "patient");
-      setScr("new"); // Jump to new study screen so they can choose zone
     } catch (e) {
       console.error(e);
       flash("Помилка завантаження файлів");
