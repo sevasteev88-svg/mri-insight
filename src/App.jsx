@@ -5,7 +5,7 @@ import {
   Eye, ChevronRight, AlertCircle, CheckCircle, Mic, MicOff, Search,
   EyeOff, Columns, FileText, Check, ExternalLink, ChevronLeft,
   Volume2, Square, Info, Archive, Trash2, RotateCcw, Paperclip, Crosshair
-, Activity, Sun, Clipboard, Download, Ruler, TriangleRight, Folder, User} from "lucide-react";
+, Activity, Sun, Clipboard, Download, Ruler, TriangleRight, Folder, User, Circle} from "lucide-react";
 
 // ═══════════ IndexedDB HELPERS ═══════════
 const DB_NAME = "mri-insight-db";
