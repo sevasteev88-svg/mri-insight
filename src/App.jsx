@@ -524,6 +524,15 @@ const INITIAL_KB = {
     })();
   }, []);
 
+  // Prevent browser zoom on Ctrl+Wheel globally
+  useEffect(() => {
+    const handleWheel = (e) => {
+      if (e.ctrlKey || e.metaKey) e.preventDefault();
+    };
+    window.addEventListener("wheel", handleWheel, { passive: false });
+    return () => window.removeEventListener("wheel", handleWheel);
+  }, []);
+
   // Save refs + atlas + kb to IndexedDB whenever they change
   const refsInitialized = useRef(false);
   useEffect(() => {
