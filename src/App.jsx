@@ -2049,7 +2049,7 @@ const Split = () => {
     const navRef = (dir) => setRefIdx(p => Math.max(0, Math.min(refImgs.length - 1, p + dir)));
 
     return (
-      <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden", padding: "8px 12px 12px", color: "#e8eaed", fontFamily: "'IBM Plex Sans',sans-serif" }}
+      <div style={{ height: "100vh", maxHeight: "100vh", boxSizing: "border-box", display: "flex", flexDirection: "column", overflow: "hidden", padding: "6px 12px 6px", color: "#e8eaed", fontFamily: "'IBM Plex Sans',sans-serif" }}
         onMouseMove={(e) => { onViewerPanMove(e); onWindowMove(e); }} onMouseUp={() => { onViewerPanEnd(); onWindowEnd(); }} onMouseLeave={() => { onViewerPanEnd(); onWindowEnd(); }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <button onClick={() => { setScr(prevScr); setRoi(null); setRoiResult(null); resetZoom("L"); resetZoom("R"); }} style={P.bk}><ArrowLeft size={16} /> Назад</button>
@@ -2068,10 +2068,10 @@ const Split = () => {
             ))}
           </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, height: "calc(100vh - 80px)" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, flex: roiResult ? "0 0 55vh" : 1 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, flex: 1, minHeight: 0, overflow: "hidden" }}>
           {/* PATIENT with ROI + zoom */}
-          <div style={{ background: "#0f1217", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column" }}>
+          <div style={{ background: "#0f1217", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px 3px" }}>
               <span style={{ fontSize: 10, fontWeight: 500, color: "#8b919c", textTransform: "uppercase", fontFamily: "'JetBrains Mono',monospace", display: "flex", alignItems: "center", gap: 4 }}>
                 <Crosshair size={10} /> Пацієнт · {study?.activeSeq} {study?.activePlane}
@@ -2083,7 +2083,7 @@ const Split = () => {
             </div>
             <div ref={roiImgRef}
               onWheel={(e) => onViewerWheel("L", e, navSlice)}
-              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomL.scale > 1 ? (panning ? "grabbing" : "grab") : "crosshair", userSelect: "none" }}
+              style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomL.scale > 1 ? (panning ? "grabbing" : "grab") : "crosshair", userSelect: "none" }}
               onContextMenu={(e)=>e.preventDefault()} onMouseDown={(e) => { if (e.button === 2) { onWindowStart("L", e); return; } if (zoomL.scale > 1) onViewerPanStart("L", e); else { if (toolMode.startsWith("measure") || toolMode === "roi") toolMouseDown(e); else onWindowStart("L", e); } }}
               onMouseMove={(e) => { if (zoomL.scale <= 1) { if (toolMode.startsWith("measure") || toolMode === "roi") toolMouseMove(e); } }}
               onMouseUp={() => { if (zoomL.scale <= 1) { if (toolMode.startsWith("measure") || toolMode === "roi") toolMouseUp(); } }}>
@@ -2207,7 +2207,7 @@ const Split = () => {
           </div>
 
           {/* RIGHT PANEL: REFERENCE OR COMPARE */}
-          <div style={{ background: "#0f1217", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column" }}>
+          <div style={{ background: "#0f1217", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 8, padding: 4, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
             
             {/* Top Toggle: Mode */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 4px 4px", gap: 6, borderBottom: "1px solid rgba(255,255,255,0.05)", marginBottom: 4 }}>
