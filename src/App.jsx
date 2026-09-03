@@ -2049,7 +2049,7 @@ const Split = () => {
     const navRef = (dir) => setRefIdx(p => Math.max(0, Math.min(refImgs.length - 1, p + dir)));
 
     return (
-      <div style={{ padding: "8px 12px 12px", color: "#e8eaed", fontFamily: "'IBM Plex Sans',sans-serif" }}
+      <div style={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden", padding: "8px 12px 12px", color: "#e8eaed", fontFamily: "'IBM Plex Sans',sans-serif" }}
         onMouseMove={(e) => { onViewerPanMove(e); onWindowMove(e); }} onMouseUp={() => { onViewerPanEnd(); onWindowEnd(); }} onMouseLeave={() => { onViewerPanEnd(); onWindowEnd(); }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <button onClick={() => { setScr(prevScr); setRoi(null); setRoiResult(null); resetZoom("L"); resetZoom("R"); }} style={P.bk}><ArrowLeft size={16} /> Назад</button>
