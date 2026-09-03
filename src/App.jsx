@@ -5,7 +5,7 @@ import {
   Eye, ChevronRight, AlertCircle, CheckCircle, Mic, MicOff, Search,
   EyeOff, Columns, FileText, Check, ExternalLink, ChevronLeft,
   Volume2, Square, Info, Archive, Trash2, RotateCcw, Paperclip, Crosshair
-, Activity, Sun, Clipboard, Download, Ruler, TriangleRight, Folder, User, Circle} from "lucide-react";
+, Activity, Sun, Clipboard, Download, Ruler, TriangleRight, Folder, User, Circle, Link} from "lucide-react";
 
 // ═══════════ IndexedDB HELPERS ═══════════
 const DB_NAME = "mri-insight-db";
@@ -2147,7 +2147,7 @@ const Split = () => {
               )}
               {/* Measurements Layer */}
               {zoomL.scale <= 1 && (measurements.length > 0 || activeMeasure || activeArea || activeAngle.length > 0) && (
-                <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 10 }}>
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 10 }}>
                   {measurements.map((m, i) => {
                     if (m.type === "line") {
                       return (
@@ -2176,7 +2176,7 @@ const Split = () => {
                     } else if (m.type === "angle") {
                       return (
                         <g key={i}>
-                          <polyline points={`${m.pts[1].x*100}%,${m.pts[1].y*100}% ${m.pts[0].x*100}%,${m.pts[0].y*100}% ${m.pts[2].x*100}%,${m.pts[2].y*100}%`} stroke="#e24b4a" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                          <polyline points={`${m.pts[1].x*100},${m.pts[1].y*100} ${m.pts[0].x*100},${m.pts[0].y*100} ${m.pts[2].x*100},${m.pts[2].y*100}`} stroke="#e24b4a" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
                           <circle cx={`${m.pts[0].x*100}%`} cy={`${m.pts[0].y*100}%`} r="3" fill="#e24b4a" />
                           <circle cx={`${m.pts[1].x*100}%`} cy={`${m.pts[1].y*100}%`} r="3" fill="#e24b4a" />
                           <circle cx={`${m.pts[2].x*100}%`} cy={`${m.pts[2].y*100}%`} r="3" fill="#e24b4a" />
@@ -2204,7 +2204,7 @@ const Split = () => {
                     <g>
                       {activeAngle.length === 1 && <line x1={`${activeAngle[0].x*100}%`} y1={`${activeAngle[0].y*100}%`} x2={`${angleMousePos.x*100}%`} y2={`${angleMousePos.y*100}%`} stroke="rgba(226,75,74,.6)" strokeWidth="2" strokeDasharray="4" />}
                       {activeAngle.length === 2 && (
-                        <polyline points={`${activeAngle[1].x*100}%,${activeAngle[1].y*100}% ${activeAngle[0].x*100}%,${activeAngle[0].y*100}% ${angleMousePos.x*100}%,${angleMousePos.y*100}%`} stroke="rgba(226,75,74,.6)" strokeWidth="2" strokeDasharray="4" fill="none"/>
+                        <polyline points={`${activeAngle[1].x*100},${activeAngle[1].y*100} ${activeAngle[0].x*100},${activeAngle[0].y*100} ${angleMousePos.x*100},${angleMousePos.y*100}`} stroke="rgba(226,75,74,.6)" strokeWidth="2" strokeDasharray="4" fill="none"/>
                       )}
                     </g>
                   )}
