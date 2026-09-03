@@ -568,6 +568,9 @@ const INITIAL_KB = {
       let detectedPlane = study?.activePlane || "Sag";
       let ps = null;
       let extractedName = null;
+      let instanceNumber = null;
+      let sliceLocation = null;
+      let imagePositionPatient = null;
 
       if (f.name.toLowerCase().endsWith(".dcm") || f.name.toLowerCase().endsWith(".dicom") || f.type === "application/dicom" || (!f.type.startsWith("image/") && !f.type.startsWith("video/"))) {
         try {
@@ -612,9 +615,6 @@ const INITIAL_KB = {
               }
 
               // Extract spatial sorting metadata
-              let instanceNumber = null;
-              let sliceLocation = null;
-              let imagePositionPatient = null;
 
               const inTag = image.getTag(0x0020, 0x0013); // Instance Number
               if (inTag && inTag.value && inTag.value[0] !== undefined) {
