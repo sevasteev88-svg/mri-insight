@@ -611,6 +611,32 @@ const INITIAL_KB = {
                 extractedName = pNameTag.value[0].toString().replace(/\^/g, " ").trim();
               }
 
+              // Extract spatial sorting metadata
+              let instanceNumber = null;
+              let sliceLocation = null;
+              let imagePositionPatient = null;
+
+              const inTag = image.getTag(0x0020, 0x0013); // Instance Number
+              if (inTag && inTag.value && inTag.value[0] !== undefined) {
+                const parsed = parseInt(inTag.value[0], 10);
+                if (!isNaN(parsed)) instanceNumber = parsed;
+              }
+
+              const slTag = image.getTag(0x0020, 0x1041); // Slice Location
+              if (slTag && slTag.value && slTag.value[0] !== undefined) {
+                const parsed = parseFloat(slTag.value[0]);
+                if (!isNaN(parsed)) sliceLocation = parsed;
+              }
+
+              const ippTag = image.getTag(0x0020, 0x0032); // Image Position (Patient)
+              if (ippTag && ippTag.value && ippTag.value.length >= 3) {
+                imagePositionPatient = [
+                  parseFloat(ippTag.value[0]),
+                  parseFloat(ippTag.value[1]),
+                  parseFloat(ippTag.value[2])
+                ];
+              }
+
             // -- End Metadata Detection --
 
             const rawData = image.getInterpretedData();
@@ -661,7 +687,7 @@ const INITIAL_KB = {
       }
 
       const fin = (target === "patient" && anon) ? await anonymizeImage(d) : d;
-      const obj = { id: Date.now() + Math.random(), name: f.name, data: fin, ts: Date.now(), ps };
+      const obj = { id: Date.now() + Math.random(), name: f.name, data: fin, ts: Date.now(), ps, instanceNumber, sliceLocation, imagePositionPatient };
       if (target === "ref") setRefs(p => ({ ...p, [selZone]: [...(p[selZone] || []), obj] }));
       else { 
         const k = `${detectedSeq}_${detectedPlane}`; 
@@ -1138,7 +1164,32 @@ const INITIAL_KB = {
 
   // Helpers for series
   const seriesKey = () => `${study?.activeSeq}_${study?.activePlane}`;
-  const curImgs = () => (study?.series?.[seriesKey()] || []);
+    const sortSlices = (slices) => {
+    if (!slices || slices.length <= 1) return slices || [];
+    return [...slices].sort((a, b) => {
+      // 1. Primary: Image Position (Patient) projected onto slice normal
+      if (a.imagePositionPatient && b.imagePositionPatient) {
+        // Detect dominant axis between the slices
+        const dx = Math.abs(a.imagePositionPatient[0] - b.imagePositionPatient[0]);
+        const dy = Math.abs(a.imagePositionPatient[1] - b.imagePositionPatient[1]);
+        const dz = Math.abs(a.imagePositionPatient[2] - b.imagePositionPatient[2]);
+        if (dx >= dy && dx >= dz) return a.imagePositionPatient[0] - b.imagePositionPatient[0];
+        if (dy >= dx && dy >= dz) return a.imagePositionPatient[1] - b.imagePositionPatient[1];
+        return a.imagePositionPatient[2] - b.imagePositionPatient[2];
+      }
+      // 2. Secondary: Slice Location
+      if (a.sliceLocation !== null && a.sliceLocation !== undefined && b.sliceLocation !== null && b.sliceLocation !== undefined) {
+        return a.sliceLocation - b.sliceLocation;
+      }
+      // 3. Tertiary: Instance Number
+      if (a.instanceNumber !== null && a.instanceNumber !== undefined && b.instanceNumber !== null && b.instanceNumber !== undefined) {
+        return a.instanceNumber - b.instanceNumber;
+      }
+      // 4. Fallback: filename natural sort (e.g. IMG001, IMG002 or 1.dcm, 2.dcm)
+      return (a.name || "").localeCompare(b.name || "", undefined, { numeric: true, sensitivity: "base" });
+    });
+  };
+  const curImgs = () => sortSlices(study?.series?.[seriesKey()]);
   const allImgs = () => Object.entries(study?.series || {}).flatMap(([key, imgs]) => imgs.map(im => ({ ...im, seriesKey: key })));
   const totalCount = () => Object.values(study?.series || {}).reduce((s, a) => s + a.length, 0);
   const seriesCounts = () => {
@@ -2021,7 +2072,7 @@ const Split = () => {
       }
     };
 
-    const compImgs = (rightMode === "compare" && compareSeriesKey && study?.series[compareSeriesKey]) || [];
+    const compImgs = (rightMode === "compare" && compareSeriesKey && sortSlices(study?.series[compareSeriesKey])) || [];
 
     const navSlice = (dir) => { 
       setSplitIdx(p => {
