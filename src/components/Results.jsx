@@ -113,8 +113,6 @@ export default function Results() {
                 ai_report: study.doctorReport || null,
                 key_images: cleanKeyImages,
                 findings: study.findings || [],
-                summary: study.summary || null,
-                recommendation: study.recommendation || null,
                 archived: study.archived || false,
                 updated_at: new Date().toISOString()
               };
@@ -130,7 +128,7 @@ export default function Results() {
 
                 if (supaErr) {
                   console.error("Supabase upsert error:", supaErr);
-                  flash(`Локально збережено! Хмара: ${supaErr.message || JSON.stringify(supaErr)}`);
+                  flash(`Збережено локально! Хмара повідомила: ${supaErr.message || JSON.stringify(supaErr)}`);
                 } else if (savedRow?.id) {
                   supaSuccess = true;
                   savedRowId = savedRow.id;
@@ -140,6 +138,7 @@ export default function Results() {
                 }
               } catch (cloudErr) {
                 console.warn("Supabase network error:", cloudErr);
+                flash(`Збережено локально! Помилка мережі хмари: ${cloudErr.message || cloudErr}`);
               }
 
               // 2. Ensure listed in studies overview
@@ -166,8 +165,6 @@ export default function Results() {
 
               if (supaSuccess) {
                 flash("Картку пацієнта та всі нотатки успішно збережено в хмару Supabase!");
-              } else {
-                flash("Дослідження збережено локально в пам'ять пристрою!");
               }
             } catch(e) {
               console.error("Save error:", e);
