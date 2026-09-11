@@ -80,20 +80,27 @@ export default function Results() {
                 return true;
               });
 
+              // 1. Sync to Supabase
+              // Check if study.id is a valid UUID
+              const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
+              const supaId = isUuid ? study.id : (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : undefined);
+              const targetId = supaId || study.id;
+
               const toSave = { 
                 ...study, 
+                id: targetId,
                 vnotes: cleanVnotes,
                 keyImages: cleanKeyImages,
                 status: (study.findings || []).length > 0 ? "done" : "draft" 
               };
               setStudy(toSave);
               setVnotes(cleanVnotes);
-              await dbPut("studies", String(study.id), toSave);
 
-              // 1. Sync to Supabase
-              // Check if study.id is a valid UUID
-              const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
-              const supaId = isUuid ? study.id : (crypto?.randomUUID ? crypto.randomUUID() : undefined);
+              // Always save to IndexedDB under both original id and targetId so it never gets lost
+              await dbPut("studies", String(targetId), toSave);
+              if (String(study.id) !== String(targetId)) {
+                await dbPut("studies", String(study.id), toSave);
+              }
 
               const supaPayload = {
                 ...(supaId ? { id: supaId } : {}),
@@ -123,11 +130,13 @@ export default function Results() {
 
                 if (supaErr) {
                   console.error("Supabase upsert error:", supaErr);
-                  flash(`Увага: збережено локально, але помилка хмари: ${supaErr.message || "помилка Supabase"}`);
+                  flash(`Локально збережено! Хмара: ${supaErr.message || JSON.stringify(supaErr)}`);
                 } else if (savedRow?.id) {
                   supaSuccess = true;
                   savedRowId = savedRow.id;
                   setStudy(p => ({ ...p, id: savedRow.id }));
+                  // Ensure saved under final Supabase row id in local db as well
+                  await dbPut("studies", String(savedRow.id), { ...toSave, id: savedRow.id });
                 }
               } catch (cloudErr) {
                 console.warn("Supabase network error:", cloudErr);
@@ -135,7 +144,7 @@ export default function Results() {
 
               // 2. Ensure listed in studies overview
               const fc = (study.findings || []).length;
-              const studyIdToUse = savedRowId || supaId || study.id;
+              const studyIdToUse = savedRowId || targetId;
               const meta = { 
                 id: studyIdToUse, 
                 pn: study.patientName, 
