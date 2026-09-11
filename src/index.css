@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+body {
+ margin: 0;
+ background-color: #0c0e12;
+ color: #e8eaed;
+ font-family: 'IBM Plex Sans', sans-serif;
+ -webkit-tap-highlight-color: transparent;
+}
+
+::-webkit-scrollbar {
+ width: 8px;
+ height: 8px;
+}
+::-webkit-scrollbar-track {
+ background: #0c0e12;
+}
+::-webkit-scrollbar-thumb {
+ background: #2a2e36;
+ border-radius: 4px;
+}
