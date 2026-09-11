@@ -117,6 +117,54 @@ const INITIAL_KB = {
   shoulder: [{ id: "shoulder_1", title: "Обертальна манжета", text: "Супраспінатус — найчастіша локалізація розривів. Оцінюйте: частковий (суглобова/бурсальна поверхня) чи повношаровий. Звертайте увагу на ретракцію м'яза та жирову атрофію (за Goutallier)." }]
 };
 
+  const [syncingCloud, setSyncingCloud] = useState(false);
+
+  const fetchCloudStudies = useCallback(async () => {
+    try {
+      setSyncingCloud(true);
+      const { data, error } = await supabase
+        .from("studies")
+        .select("*")
+        .order("updated_at", { ascending: false });
+
+      if (error) {
+        console.warn("Supabase fetch error:", error);
+        setCloudSyncStatus("offline");
+        return;
+      }
+
+      setCloudSyncStatus("online");
+      if (Array.isArray(data) && data.length > 0) {
+        // Map supabase rows to local overview meta format
+        const cloudMetaList = data.map(row => ({
+          id: row.id,
+          pn: row.patient_name,
+          z: row.zone,
+          d: row.study_date,
+          mriDate: row.mri_date || row.study_date,
+          ic: row.total_images || 0,
+          fc: (row.findings || []).length,
+          archived: row.archived || false,
+          hasNotes: Boolean(row.doctor_notes && Object.keys(row.doctor_notes).length > 0)
+        }));
+
+        setStudies(prev => {
+          // Merge local and cloud studies, preferring cloud row if id matches
+          const localMap = new Map((prev || []).map(s => [String(s.id), s]));
+          cloudMetaList.forEach(c => localMap.set(String(c.id), c));
+          const merged = Array.from(localMap.values());
+          try { localStorage.setItem("mri-hist", JSON.stringify(merged)); } catch {}
+          return merged;
+        });
+      }
+    } catch (e) {
+      console.warn("Cloud sync exception:", e);
+      setCloudSyncStatus("offline");
+    } finally {
+      setSyncingCloud(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!window.pdfjsLib) {
       const s = document.createElement("script");
@@ -146,8 +194,11 @@ const INITIAL_KB = {
         });
         setKb(mergedKb);
       } catch {}
+
+      // Fetch fresh studies from Cloud Supabase
+      await fetchCloudStudies();
     })();
-  }, []);
+  }, [fetchCloudStudies]);
 
   // Prevent browser zoom on Ctrl+Wheel globally
   useEffect(() => {
@@ -498,7 +549,38 @@ const INITIAL_KB = {
 
   const loadStudy = async (id) => {
     try {
-      const saved = await dbGet("studies", String(id));
+      let saved = await dbGet("studies", String(id));
+      if (!saved) {
+        // Fallback: try fetching full record from Supabase Cloud
+        const { data, error } = await supabase
+          .from("studies")
+          .select("*")
+          .eq("id", id)
+          .maybeSingle();
+
+        if (data && !error) {
+          saved = {
+            id: data.id,
+            patientName: data.patient_name || "",
+            zone: data.zone || "knee",
+            zones: [data.zone || "knee"],
+            date: data.study_date || "",
+            mriDate: data.mri_date || data.study_date || "",
+            findings: data.findings || [],
+            summary: data.summary || "",
+            recommendation: data.recommendation || "",
+            keyImages: data.key_images || [],
+            vnotes: data.doctor_notes || {},
+            doctorReport: data.ai_report || null,
+            archived: data.archived || false,
+            status: (data.findings || []).length > 0 ? "done" : "draft",
+            series: {}
+          };
+          // Cache locally to IndexedDB for offline access
+          try { await dbPut("studies", String(saved.id), saved); } catch {}
+        }
+      }
+
       if (saved) {
         setStudy(saved);
         setVnotes(saved.vnotes || {});
@@ -507,7 +589,10 @@ const INITIAL_KB = {
       } else {
         flash("Дані дослідження не знайдено");
       }
-    } catch { flash("Помилка завантаження"); }
+    } catch (e) {
+      console.error(e);
+      flash("Помилка завантаження");
+    }
   };
 
   const archiveStudy = async (id) => {
@@ -1496,8 +1581,8 @@ ${notes ? notes : "Нотаток немає. Опиши абсолютну но
     seriesKey, sortSlices, curImgs, allImgs, totalCount, seriesCounts,
     analyze, generateReport, generateAiReport,
     onViewerWheel, resetZoom, onViewerPanStart, onViewerPanMove, onViewerPanEnd,
-    onWindowStart, onWindowMove, onWindowEnd,
-    loadArchive, linkArchive, restoreArchiveAccess, unlinkArchive, openPatientFromArchive
+    loadArchive, linkArchive, restoreArchiveAccess, unlinkArchive, openPatientFromArchive,
+    fetchCloudStudies, syncingCloud
   };
 
   return (

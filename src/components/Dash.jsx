@@ -1,7 +1,7 @@
 import React from "react";
 import { AppContext } from "../context/AppContext.jsx";
 import { P } from "../styles/styles.js";
-import { Brain, Settings, AlertCircle, Plus, BookOpen, ExternalLink, Archive, Trash2, RotateCcw, Folder, User, X, ChevronRight, Cloud, CloudOff } from "lucide-react";
+import { Brain, Settings, AlertCircle, Plus, BookOpen, ExternalLink, Archive, Trash2, RotateCcw, Folder, User, X, ChevronRight, Cloud, CloudOff, RefreshCw } from "lucide-react";
 import { ZONES, ZONE_GROUPS } from "../constants/anatomy.js";
 import TI from "./TI.jsx";
 
@@ -12,7 +12,7 @@ export default function Dash() {
     newStudy, loadStudy, archiveStudy, unarchiveStudy, deleteStudy,
     archiveStatus, archiveLoading, archivePatients, archiveHandle,
     unlinkArchive, linkArchive, restoreArchiveAccess, openPatientFromArchive,
-    cloudSyncStatus
+    cloudSyncStatus, fetchCloudStudies, syncingCloud
   } = React.useContext(AppContext);
 
   return (
@@ -28,24 +28,33 @@ export default function Dash() {
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span 
+          <button 
+            onClick={fetchCloudStudies}
+            disabled={syncingCloud}
             style={{ 
               fontSize: 11, 
               display: "flex", 
               alignItems: "center", 
-              gap: 4, 
+              gap: 5, 
               background: cloudSyncStatus === "online" ? "rgba(34,197,94,.12)" : "rgba(224,169,59,.12)", 
               color: cloudSyncStatus === "online" ? "#4ec99b" : "#e0a93b", 
               border: `0.5px solid ${cloudSyncStatus === "online" ? "rgba(34,197,94,.3)" : "rgba(224,169,59,.3)"}`,
               padding: "4px 8px", 
               borderRadius: 4, 
+              cursor: "pointer",
               fontFamily: "'JetBrains Mono',monospace" 
             }}
-            title={cloudSyncStatus === "online" ? "Хмара Supabase підключена: дані синхронізуються" : "Офлайн-режим (IndexedDB)"}
+            title={syncingCloud ? "Оновлюється з хмари..." : "Натисніть для оновлення з хмари Supabase"}
           >
-            {cloudSyncStatus === "online" ? <Cloud size={13} /> : <CloudOff size={13} />}
-            {cloudSyncStatus === "online" ? "CLOUD SYNC" : "LOCAL"}
-          </span>
+            {syncingCloud ? (
+              <RefreshCw size={12} className="spin" style={{ animation: "spin 1s linear infinite" }} />
+            ) : cloudSyncStatus === "online" ? (
+              <Cloud size={13} />
+            ) : (
+              <CloudOff size={13} />
+            )}
+            {syncingCloud ? "СИНХРОНІЗАЦІЯ..." : cloudSyncStatus === "online" ? "CLOUD SYNC" : "LOCAL"}
+          </button>
           <span style={{ fontSize: 11, color: "#4aa3df", background: "#15324a", padding: "4px 10px", borderRadius: 4, fontFamily: "'JetBrains Mono',monospace" }}>
             {aiModel === "gemini-2.5-pro" ? "GEMINI 2.5 PRO" : "GEMINI 2.5 FLASH"}
           </span>
@@ -160,9 +169,20 @@ export default function Dash() {
           return (
             <div style={{ marginTop: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <p style={{ ...P.secT, margin: 0 }}>
-                  {showArchive ? "📁 Архів пацієнтів та травм" : "📋 Активні дослідження"}
-                </p>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <p style={{ ...P.secT, margin: 0 }}>
+                    {showArchive ? "📁 Архів пацієнтів та травм" : "📋 Активні дослідження"}
+                  </p>
+                  <button 
+                    onClick={fetchCloudStudies} 
+                    disabled={syncingCloud} 
+                    style={{ ...P.sm, padding: "3px 8px", fontSize: 11, color: "#4aa3df", background: "rgba(74,163,223,.1)", border: "0.5px solid rgba(74,163,223,.25)", display: "flex", alignItems: "center", gap: 4 }}
+                    title="Синхронізувати з хмарою Supabase"
+                  >
+                    <RefreshCw size={11} style={{ animation: syncingCloud ? "spin 1s linear infinite" : "none" }} />
+                    {syncingCloud ? "Оновлення..." : "Оновити"}
+                  </button>
+                </div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button 
                     onClick={() => setShowArchive(false)} 
