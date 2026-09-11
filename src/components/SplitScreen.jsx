@@ -438,22 +438,50 @@ export default function SplitScreen() {
                   <FileText size={11} /> Нотатка до зрізу #{splitIdx + 1}
                   {recording === noteKey && <span style={{ color: "#e24b4a", fontSize: 9, fontWeight: 700, animation: "pulse 1s infinite" }}>● ЗАПИС...</span>}
                 </span>
-                {vnotes[noteKey]?.trim() && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <button 
                     onClick={() => {
-                      setVnotes(p => {
-                        const upd = { ...p };
-                        delete upd[noteKey];
-                        return upd;
-                      });
-                      flash("Нотатку зрізу видалено");
-                    }} 
-                    style={{ background: "transparent", border: "none", color: "#5f6672", cursor: "pointer", padding: "1px 4px", fontSize: 9, display: "flex", alignItems: "center", gap: 2 }}
-                    title="Очистити нотатку"
+                      if (!im[splitIdx] || !study?.zone) return;
+                      const curSlice = im[splitIdx];
+                      const sKey = seriesKey();
+                      const noteText = vnotes[noteKey]?.trim() || "";
+                      const caption = `${sKey} #${splitIdx + 1}${noteText ? ` — ${noteText}` : ""}`;
+                      const refObj = {
+                        id: Date.now() + Math.random(),
+                        name: `${study.patientName || "Пацієнт"} [${sKey} #${splitIdx + 1}]`,
+                        data: curSlice.data,
+                        caption: caption,
+                        ts: Date.now(),
+                        src: "patient_slice"
+                      };
+                      setRefs(p => ({
+                        ...p,
+                        [study.zone]: [...(p[study.zone] || []), refObj]
+                      }));
+                      flash(`✅ Зріз додано до референсів норми ("${ZONES[study.zone]?.short || study.zone}")`);
+                    }}
+                    style={{ background: "rgba(74,163,223,.12)", border: "0.5px solid rgba(74,163,223,.3)", borderRadius: 4, color: "#4aa3df", cursor: "pointer", padding: "2px 6px", fontSize: 9, display: "flex", alignItems: "center", gap: 3 }}
+                    title="Зберегти цей якісний зріз у бібліотеку норми"
                   >
-                    <Trash2 size={10} /> очистити
+                    <BookOpen size={10} /> + в норму
                   </button>
-                )}
+                  {vnotes[noteKey]?.trim() && (
+                    <button 
+                      onClick={() => {
+                        setVnotes(p => {
+                          const upd = { ...p };
+                          delete upd[noteKey];
+                          return upd;
+                        });
+                        flash("Нотатку зрізу видалено");
+                      }} 
+                      style={{ background: "transparent", border: "none", color: "#5f6672", cursor: "pointer", padding: "1px 4px", fontSize: 9, display: "flex", alignItems: "center", gap: 2 }}
+                      title="Очистити нотатку"
+                    >
+                      <Trash2 size={10} /> очистити
+                    </button>
+                  )}
+                </div>
               </div>
               <textarea
                 value={vnotes[noteKey] || ""}

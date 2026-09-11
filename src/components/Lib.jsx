@@ -1,7 +1,7 @@
-﻿import React from "react";
+import React from "react";
 import { AppContext } from "../context/AppContext.jsx";
 import { P } from "../styles/styles.js";
-import { ArrowLeft, BookOpen, Upload, FileText, X, Plus, Trash2, Check } from "lucide-react";
+import { ArrowLeft, BookOpen, Upload, FileText, X, Plus, Trash2, Check, Edit2 } from "lucide-react";
 import { ZONES } from "../constants/anatomy.js";
 import ZoneGroups from "./ZoneGroups.jsx";
 
@@ -12,6 +12,10 @@ export default function Lib() {
     refIn, pdfIn, atlasIn, pdfOk, uploadImgs, uploadPdf, flash,
     setViewImg, pdfM, setPdfM, rf, setRf, rt, setRt, addPdfPages
   } = React.useContext(AppContext);
+
+  // Custom modals for clean inputs without ugly browser prompts
+  const [kbModal, setKbModal] = React.useState(null); // { mode: 'create'|'edit', id?, title, text }
+  const [atlasModal, setAtlasModal] = React.useState(null); // { file, data, label }
 
   const imgs = refs[selZone] || [];
   const atlasImgs = atlas[selZone] || [];
@@ -117,16 +121,12 @@ export default function Lib() {
             <div style={P.upC} onClick={() => atlasIn.current?.click()}>
               <Upload size={20} style={{ color: "#a78bfa" }} />
               <span style={P.upL}>Додати зображення</span>
-              <input ref={atlasIn} type="file" multiple accept="image/*,.dcm,.dicom" style={{ display: "none" }} onChange={async (e) => {
-                const files = Array.from(e.target.files).filter(f => f.type.startsWith("image/"));
-                for (const f of files) {
-                  const d = await new Promise(r => { const fr = new FileReader(); fr.onload = ev => r(ev.target.result); fr.readAsDataURL(f); });
-                  const label = prompt(`Опис для "${f.name}":\nНаприклад: "ПКС на сагітальному зрізі, T2" або "Медіальний меніск, коронарна площина"`);
-                  if (label && label.trim()) {
-                    setAtlas(p => ({ ...p, [selZone]: [...(p[selZone] || []), { id: Date.now() + Math.random(), name: f.name, data: d, label: label.trim(), ts: Date.now() }] }));
-                  }
-                }
-                flash(`Додано до атласу`);
+              <input ref={atlasIn} type="file" accept="image/*,.dcm,.dicom" style={{ display: "none" }} onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const d = await new Promise(r => { const fr = new FileReader(); fr.onload = ev => r(ev.target.result); fr.readAsDataURL(file); });
+                setAtlasModal({ name: file.name, data: d, label: "" });
+                e.target.value = "";
               }} />
             </div>
           </div>
@@ -166,14 +166,10 @@ export default function Lib() {
               📝 Додайте текстові правила інтерпретації МРТ для кожної зони. Наприклад: "На T2 ПКС має бути низького сигналу. Якщо сигнал підвищений та зв'язка потовщена — підозра на часткове пошкодження." ІІ використовуватиме ці правила при аналізі знімків.
             </p>
           </div>
-          <button onClick={() => {
-            const title = prompt("Назва правила:\nНаприклад: 'ПКС — ознаки пошкодження' або 'Меніск — критерії розриву'");
-            if (!title || !title.trim()) return;
-            const text = prompt(`Текст правила для "${title.trim()}":\nОпишіть як виглядає патологія на МРТ, які послідовності найкраще показують, на що звертати увагу.`);
-            if (!text || !text.trim()) return;
-            setKb(p => ({ ...p, [selZone]: [...(p[selZone] || []), { id: Date.now(), title: title.trim(), text: text.trim() }] }));
-            flash("Правило додано");
-          }} style={{ ...P.sm, padding: "10px 16px", fontSize: 12, background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.2)", color: "#f59e0b", marginBottom: 12, width: "100%", justifyContent: "center" }}>
+          <button 
+            onClick={() => setKbModal({ mode: "create", title: "", text: "" })} 
+            style={{ ...P.sm, padding: "10px 16px", fontSize: 12, background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.2)", color: "#f59e0b", marginBottom: 12, width: "100%", justifyContent: "center" }}
+          >
             <Plus size={14} style={{ marginRight: 4 }} /> Додати правило для "{ZONES[selZone]?.short}"
           </button>
           {(kb[selZone] || []).length === 0 ? (
@@ -189,21 +185,149 @@ export default function Lib() {
                 <div key={entry.id} style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 8, padding: 12, marginBottom: 8, position: "relative" }}>
                   <h4 style={{ fontSize: 13, fontWeight: 600, color: "#f59e0b", marginBottom: 6 }}>{entry.title}</h4>
                   <p style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{entry.text}</p>
-                  <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
-                    <button onClick={() => {
-                      const newText = prompt("Редагувати текст правила:", entry.text);
-                      if (newText && newText.trim()) setKb(p => ({ ...p, [selZone]: (p[selZone] || []).map(e => e.id === entry.id ? { ...e, text: newText.trim() } : e) }));
-                    }} style={{ ...P.sm, fontSize: 11, color: "#06b6d4" }}>Редагувати</button>
-                    <button onClick={() => {
-                      setKb(p => ({ ...p, [selZone]: (p[selZone] || []).filter(e => e.id !== entry.id) }));
-                      flash("Правило видалено");
-                    }} style={{ ...P.sm, fontSize: 11, color: "#ef4444" }}><Trash2 size={11} /> Видалити</button>
+                  <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                    <button 
+                      onClick={() => setKbModal({ mode: "edit", id: entry.id, title: entry.title, text: entry.text })} 
+                      style={{ ...P.sm, fontSize: 11, color: "#06b6d4", display: "flex", alignItems: "center", gap: 4 }}
+                    >
+                      <Edit2 size={11} /> Редагувати
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setKb(p => ({ ...p, [selZone]: (p[selZone] || []).filter(e => e.id !== entry.id) }));
+                        flash("Правило видалено");
+                      }} 
+                      style={{ ...P.sm, fontSize: 11, color: "#ef4444", display: "flex", alignItems: "center", gap: 4 }}
+                    >
+                      <Trash2 size={11} /> Видалити
+                    </button>
                   </div>
                 </div>
               ))}
             </div>
           )}
         </>
+      )}
+
+      {/* KB MODAL (CREATE / EDIT) */}
+      {kbModal && (
+        <div style={P.ov} onClick={() => setKbModal(null)}>
+          <div style={{ ...P.mPan, width: "100%", maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ ...P.panT, color: "#f59e0b", display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+                <FileText size={16} /> {kbModal.mode === "create" ? `Додати правило: ${ZONES[selZone]?.short}` : "Редагувати правило"}
+              </h3>
+              <button onClick={() => setKbModal(null)} style={P.clX}><X size={16} /></button>
+            </div>
+
+            <div style={{ marginBottom: 10 }}>
+              <label style={P.lb}>Назва структури або критерію</label>
+              <input 
+                value={kbModal.title} 
+                onChange={e => setKbModal(p => ({ ...p, title: e.target.value }))} 
+                placeholder="напр. ПКС — критерії розриву або Меніск за Stoller" 
+                style={P.inp} 
+                autoFocus
+              />
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={P.lb}>Діагностичне правило для ШІ</label>
+              <textarea 
+                value={kbModal.text} 
+                onChange={e => setKbModal(p => ({ ...p, text: e.target.value }))} 
+                placeholder="Опишіть як виглядає патологія на Т1/Т2/PDFS, типові симптоми, на що звертати увагу..." 
+                rows={5} 
+                style={{ ...P.inp, height: "auto", resize: "vertical", lineHeight: 1.5 }} 
+              />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={() => setKbModal(null)} style={P.sm}>Скасувати</button>
+              <button 
+                onClick={() => {
+                  if (!kbModal.title.trim() || !kbModal.text.trim()) {
+                    flash("Заповніть назву та текст правила");
+                    return;
+                  }
+                  if (kbModal.mode === "create") {
+                    setKb(p => ({
+                      ...p,
+                      [selZone]: [...(p[selZone] || []), { id: Date.now(), title: kbModal.title.trim(), text: kbModal.text.trim() }]
+                    }));
+                    flash("✅ Нове правило успішно додано");
+                  } else {
+                    setKb(p => ({
+                      ...p,
+                      [selZone]: (p[selZone] || []).map(e => e.id === kbModal.id ? { ...e, title: kbModal.title.trim(), text: kbModal.text.trim() } : e)
+                    }));
+                    flash("✅ Правило оновлено");
+                  }
+                  setKbModal(null);
+                }} 
+                style={{ ...P.pri, background: "#f59e0b", color: "#000", fontWeight: 600, padding: "8px 16px" }}
+              >
+                Зберегти правило
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ATLAS MODAL (LABELING) */}
+      {atlasModal && (
+        <div style={P.ov} onClick={() => setAtlasModal(null)}>
+          <div style={{ ...P.mPan, width: "100%", maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ ...P.panT, color: "#a78bfa", display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+                <BookOpen size={16} /> Додати до атласу: {ZONES[selZone]?.short}
+              </h3>
+              <button onClick={() => setAtlasModal(null)} style={P.clX}><X size={16} /></button>
+            </div>
+
+            {atlasModal.data && (
+              <img src={atlasModal.data} alt="" style={{ width: "100%", maxHeight: 200, objectFit: "contain", borderRadius: 6, marginBottom: 12, background: "#000" }} />
+            )}
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={P.lb}>Опис зображення / Анатомічна структура</label>
+              <input 
+                value={atlasModal.label} 
+                onChange={e => setAtlasModal(p => ({ ...p, label: e.target.value }))} 
+                placeholder="напр. ПКС на сагітальному зрізі, PDFS або Медіальний меніск" 
+                style={P.inp} 
+                autoFocus
+              />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={() => setAtlasModal(null)} style={P.sm}>Скасувати</button>
+              <button 
+                onClick={() => {
+                  if (!atlasModal.label.trim()) {
+                    flash("Введіть підпис для зображення");
+                    return;
+                  }
+                  setAtlas(p => ({
+                    ...p,
+                    [selZone]: [...(p[selZone] || []), {
+                      id: Date.now() + Math.random(),
+                      name: atlasModal.name || "Знімок атласу",
+                      data: atlasModal.data,
+                      label: atlasModal.label.trim(),
+                      ts: Date.now()
+                    }]
+                  }));
+                  flash("✅ Знімок додано до атласу");
+                  setAtlasModal(null);
+                }} 
+                style={{ ...P.pri, background: "#8b5cf6", color: "#fff", fontWeight: 600, padding: "8px 16px" }}
+              >
+                Додати до атласу
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* PDF Modal */}
