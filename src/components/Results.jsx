@@ -91,16 +91,20 @@ export default function Results() {
               await dbPut("studies", String(study.id), toSave);
 
               // 1. Sync to Supabase
+              // Check if study.id is a valid UUID
+              const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
+              const supaId = isUuid ? study.id : (crypto?.randomUUID ? crypto.randomUUID() : undefined);
+
               const supaPayload = {
-                id: (typeof study.id === "string" && study.id.length === 36) ? study.id : undefined,
+                ...(supaId ? { id: supaId } : {}),
                 patient_name: study.patientName || "Без імені",
                 zone: study.zone || "knee",
                 study_date: study.date || new Date().toISOString().split('T')[0],
                 mri_date: study.mriDate || study.date || null,
                 total_images: totalCount(),
-                doctor_notes: fullVnotes,
+                doctor_notes: cleanVnotes,
                 ai_report: study.doctorReport || null,
-                key_images: study.keyImages || [],
+                key_images: cleanKeyImages,
                 findings: study.findings || [],
                 summary: study.summary || null,
                 recommendation: study.recommendation || null,
@@ -108,21 +112,30 @@ export default function Results() {
                 updated_at: new Date().toISOString()
               };
 
-              const { data: savedRow, error: supaErr } = await supabase
-                .from("studies")
-                .upsert(supaPayload)
-                .select()
-                .single();
+              let supaSuccess = false;
+              let savedRowId = null;
+              try {
+                const { data: savedRow, error: supaErr } = await supabase
+                  .from("studies")
+                  .upsert(supaPayload)
+                  .select()
+                  .single();
 
-              if (supaErr) {
-                console.warn("Supabase upsert warning:", supaErr);
-              } else if (savedRow?.id) {
-                setStudy(p => ({ ...p, id: savedRow.id }));
+                if (supaErr) {
+                  console.error("Supabase upsert error:", supaErr);
+                  flash(`Увага: збережено локально, але помилка хмари: ${supaErr.message || "помилка Supabase"}`);
+                } else if (savedRow?.id) {
+                  supaSuccess = true;
+                  savedRowId = savedRow.id;
+                  setStudy(p => ({ ...p, id: savedRow.id }));
+                }
+              } catch (cloudErr) {
+                console.warn("Supabase network error:", cloudErr);
               }
 
               // 2. Ensure listed in studies overview
               const fc = (study.findings || []).length;
-              const studyIdToUse = savedRow?.id || study.id;
+              const studyIdToUse = savedRowId || supaId || study.id;
               const meta = { 
                 id: studyIdToUse, 
                 pn: study.patientName, 
@@ -132,7 +145,7 @@ export default function Results() {
                 ic: totalCount(), 
                 fc, 
                 archived: study.archived || false, 
-                hasNotes: Object.keys(fullVnotes).length > 0 
+                hasNotes: Object.keys(cleanVnotes).length > 0 
               };
 
               setStudies(p => {
@@ -142,10 +155,14 @@ export default function Results() {
                 return updated;
               });
 
-              flash("Картку пацієнта та всі нотатки успішно збережено в хмару Supabase!");
+              if (supaSuccess) {
+                flash("Картку пацієнта та всі нотатки успішно збережено в хмару Supabase!");
+              } else {
+                flash("Дослідження збережено локально в пам'ять пристрою!");
+              }
             } catch(e) {
-              console.error(e);
-              flash("Помилка збереження в базу");
+              console.error("Save error:", e);
+              flash(`Помилка збереження: ${e.message || e}`);
             }
           }} 
           style={{ ...P.sm, padding: "10px 18px", background: "rgba(34,197,94,.18)", color: "#4ec99b", border: "1px solid rgba(34,197,94,.35)", fontSize: 12, fontWeight: 600 }}
