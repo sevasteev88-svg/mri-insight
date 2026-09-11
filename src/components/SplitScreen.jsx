@@ -5,7 +5,7 @@ import { ZONES, parseSeriesKey } from "../constants/anatomy.js";
 import { collectZoneMaterials } from "../utils/helpers.js";
 import { 
   ArrowLeft, Search, FileText, Crosshair, Star, ChevronLeft, ChevronRight, 
-  Mic, MicOff, Trash2, Link, Ruler, TriangleRight, Circle, Sun, Brain, AlertCircle, Eye, X 
+  Mic, MicOff, Trash2, Link, Ruler, TriangleRight, Circle, Sun, Brain, AlertCircle, Eye, X, BookOpen 
 } from "lucide-react";
 
 export default function SplitScreen() {
