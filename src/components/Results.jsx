@@ -105,6 +105,9 @@ export default function Results() {
               const supaPayload = {
                 ...(supaId ? { id: supaId } : {}),
                 patient_name: study.patientName || "Без імені",
+                age: study.age || null,
+                complaints: study.complaints || null,
+                mechanism: study.mechanism || null,
                 zone: study.zone || "knee",
                 study_date: study.date || new Date().toISOString().split('T')[0],
                 mri_date: study.mriDate || study.date || null,
@@ -112,7 +115,16 @@ export default function Results() {
                 doctor_notes: cleanVnotes,
                 ai_report: study.doctorReport || null,
                 key_images: cleanKeyImages,
-                findings: study.findings || [],
+                findings: [
+                  ...(study.findings || []),
+                  {
+                    _extra: {
+                      doctorNotesText: study.doctorNotes || "",
+                      attachments: study.attachments || [],
+                      conclusionReview: conclusionReview || study.conclusionReview || null
+                    }
+                  }
+                ],
                 archived: study.archived || false,
                 updated_at: new Date().toISOString()
               };
@@ -153,7 +165,7 @@ export default function Results() {
                 ic: totalCount(), 
                 fc, 
                 archived: study.archived || false, 
-                hasNotes: Object.keys(cleanVnotes).length > 0 
+                hasNotes: Object.keys(cleanVnotes).length > 0 || Boolean(study.doctorNotes)
               };
 
               setStudies(p => {
@@ -164,7 +176,7 @@ export default function Results() {
               });
 
               if (supaSuccess) {
-                flash("Картку пацієнта та всі нотатки успішно збережено в хмару Supabase!");
+                flash("Картку пацієнта, анамнез, нотатки та вкладення успішно збережено в хмару!");
               }
             } catch(e) {
               console.error("Save error:", e);
@@ -387,6 +399,24 @@ export default function Results() {
                   const upd = (study.attachments || []).filter(a => a.id !== att.id);
                   setStudy(p => ({ ...p, attachments: upd }));
                   try { await dbPut("studies", String(study.id), { ...study, attachments: upd }); } catch {}
+                  try {
+                    const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
+                    if (isUuid) {
+                      await supabase.from("studies").update({
+                        findings: [
+                          ...(study.findings || []).filter(item => !item?._extra),
+                          {
+                            _extra: {
+                              doctorNotesText: study.doctorNotes || "",
+                              attachments: upd,
+                              conclusionReview: conclusionReview || study.conclusionReview || null
+                            }
+                          }
+                        ],
+                        updated_at: new Date().toISOString()
+                      }).eq("id", study.id);
+                    }
+                  } catch {}
                 }} style={{ position: "absolute", top: 3, right: 3, background: "rgba(0,0,0,.7)", border: "none", borderRadius: 4, padding: 2, color: "#ef4444", cursor: "pointer" }}><X size={10} /></button>
               </div>
             ))}
@@ -426,7 +456,30 @@ export default function Results() {
               if (!study) return;
               try {
                 await dbPut("studies", String(study.id), study);
-                flash("Збережено в картку пацієнта");
+                // Also update in Supabase if study.id is a UUID or exists
+                try {
+                  const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
+                  if (isUuid) {
+                    await supabase.from("studies").update({
+                      complaints: study.complaints || null,
+                      mechanism: study.mechanism || null,
+                      findings: [
+                        ...(study.findings || []),
+                        {
+                          _extra: {
+                            doctorNotesText: study.doctorNotes || "",
+                            attachments: study.attachments || [],
+                            conclusionReview: conclusionReview || study.conclusionReview || null
+                          }
+                        }
+                      ],
+                      updated_at: new Date().toISOString()
+                    }).eq("id", study.id);
+                  }
+                } catch (cErr) {
+                  console.warn("Supabase card update error:", cErr);
+                }
+                flash("Збережено в картку пацієнта та оновлено в хмарі!");
               } catch { flash("Помилка збереження"); }
             }} style={{ ...P.sm, padding: "5px 12px", background: "rgba(74,163,223,.15)", color: "#4aa3df", border: "1px solid rgba(74,163,223,.3)" }}>
               <Save size={13} style={{ marginRight: 4 }} /> Зберегти

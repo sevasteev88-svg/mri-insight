@@ -567,34 +567,55 @@ const INITIAL_KB = {
   const loadStudy = async (id) => {
     try {
       let saved = await dbGet("studies", String(id));
-      if (!saved) {
-        // Fallback: try fetching full record from Supabase Cloud
-        const { data, error } = await supabase
-          .from("studies")
-          .select("*")
-          .eq("id", id)
-          .maybeSingle();
+      // If id is a UUID, check Supabase for latest updates (e.g. attachments from mobile or notes from laptop)
+      const isUuid = typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      if (isUuid) {
+        try {
+          const { data, error } = await supabase
+            .from("studies")
+            .select("*")
+            .eq("id", id)
+            .maybeSingle();
 
-        if (data && !error) {
-          saved = {
-            id: data.id,
-            patientName: data.patient_name || "",
-            zone: data.zone || "knee",
-            zones: [data.zone || "knee"],
-            date: data.study_date || "",
-            mriDate: data.mri_date || data.study_date || "",
-            findings: data.findings || [],
-            summary: data.summary || "",
-            recommendation: data.recommendation || "",
-            keyImages: data.key_images || [],
-            vnotes: data.doctor_notes || {},
-            doctorReport: data.ai_report || null,
-            archived: data.archived || false,
-            status: (data.findings || []).length > 0 ? "done" : "draft",
-            series: {}
-          };
-          // Cache locally to IndexedDB for offline access
-          try { await dbPut("studies", String(saved.id), saved); } catch {}
+          if (data && !error) {
+            let extra = null;
+            const cleanFindings = (data.findings || []).filter(item => {
+              if (item && item._extra) {
+                extra = item._extra;
+                return false;
+              }
+              return true;
+            });
+
+            const cloudStudy = {
+              id: data.id,
+              patientName: data.patient_name || saved?.patientName || "",
+              age: data.age || saved?.age || "",
+              complaints: data.complaints || saved?.complaints || "",
+              mechanism: data.mechanism || saved?.mechanism || "",
+              zone: data.zone || saved?.zone || "knee",
+              zones: saved?.zones || [data.zone || "knee"],
+              date: data.study_date || saved?.date || "",
+              mriDate: data.mri_date || data.study_date || saved?.mriDate || "",
+              findings: cleanFindings.length > 0 ? cleanFindings : (saved?.findings || []),
+              summary: data.summary || saved?.summary || "",
+              recommendation: data.recommendation || saved?.recommendation || "",
+              keyImages: (data.key_images && data.key_images.length > 0) ? data.key_images : (saved?.keyImages || []),
+              vnotes: { ...(saved?.vnotes || {}), ...(data.doctor_notes || {}) },
+              doctorNotes: extra?.doctorNotesText || data.doctor_notes_text || saved?.doctorNotes || "",
+              attachments: (extra?.attachments && extra.attachments.length > 0) ? extra.attachments : (saved?.attachments || []),
+              conclusionReview: extra?.conclusionReview || saved?.conclusionReview || null,
+              doctorReport: data.ai_report || saved?.doctorReport || null,
+              archived: data.archived !== undefined ? data.archived : (saved?.archived || false),
+              status: cleanFindings.length > 0 ? "done" : (saved?.status || "draft"),
+              series: saved?.series || {}
+            };
+
+            saved = cloudStudy;
+            try { await dbPut("studies", String(saved.id), saved); } catch {}
+          }
+        } catch (cErr) {
+          console.warn("Cloud loadStudy sync error:", cErr);
         }
       }
 
@@ -647,10 +668,34 @@ const INITIAL_KB = {
       const dataUrl = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result); r.readAsDataURL(file); });
       attachments.push({ id: Date.now() + Math.random(), name: file.name, type: file.type, data: dataUrl, ts: Date.now() });
     }
-    setStudy(p => ({ ...p, attachments }));
-    // Save updated study
-    try { await dbPut("studies", String(study.id), { ...study, attachments }); } catch {}
-    flash(`Додано ${files.length} файл(ів)`);
+    const updatedStudy = { ...study, attachments };
+    setStudy(updatedStudy);
+    // Save updated study to local DB
+    try { await dbPut("studies", String(study.id), updatedStudy); } catch {}
+
+    // Also sync to Supabase if study.id is a UUID or exists in cloud
+    try {
+      const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
+      if (isUuid) {
+        await supabase.from("studies").update({
+          findings: [
+            ...(study.findings || []),
+            {
+              _extra: {
+                doctorNotesText: study.doctorNotes || "",
+                attachments: attachments,
+                conclusionReview: conclusionReview || study.conclusionReview || null
+              }
+            }
+          ],
+          updated_at: new Date().toISOString()
+        }).eq("id", study.id);
+      }
+    } catch (supaAttErr) {
+      console.warn("Supabase attachment sync error:", supaAttErr);
+    }
+
+    flash(`Додано ${files.length} файл(ів) та синхронізовано з хмарою!`);
   };
 
   // AI review of center's conclusion
