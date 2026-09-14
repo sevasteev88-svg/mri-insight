@@ -19,6 +19,25 @@ export function AuthModal({ isLocked, setIsLocked }) {
   const [pinError, setPinError] = useState("");
 
   useEffect(() => {
+    // 1. Check if user landed from email confirmation link
+    if (typeof window !== "undefined" && window.location.hash) {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const accessToken = hashParams.get("access_token");
+      const refreshToken = hashParams.get("refresh_token");
+      if (accessToken) {
+        supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken || "" })
+          .then(({ data: { session } }) => {
+            if (session) {
+              setSession(session);
+              const savedPin = localStorage.getItem("mri_doctor_pin");
+              if (!savedPin) setPinMode("setup");
+              else setPinMode("locked");
+              window.history.replaceState(null, "", window.location.pathname);
+            }
+          }).catch(()=>{});
+      }
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       const savedPin = localStorage.getItem("mri_doctor_pin");
@@ -56,22 +75,60 @@ export function AuthModal({ isLocked, setIsLocked }) {
     }
   }, [isLocked, session]);
 
+  // Whitelist of authorized doctors
+  const DEFAULT_DOCTORS = ["sevasteev88@gmail.com"];
+
+  const getAllowedDoctors = () => {
+    try {
+      const stored = localStorage.getItem("mri_allowed_doctors");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return DEFAULT_DOCTORS;
+  };
+
   const handleAuth = async (e) => {
     e?.preventDefault();
     setAuthError("");
+
+    const cleanEmail = email.trim().toLowerCase();
+    const allowed = getAllowedDoctors().map(d => d.trim().toLowerCase());
+
+    // Strict Whitelist Check
+    if (!allowed.includes(cleanEmail)) {
+      setAuthError("Доступ обмежено. Цей email не внесено до списку авторизованих лікарів клініки.");
+      return;
+    }
+
     setBusy(true);
     try {
       if (isSignUp) {
-        const { data, error } = await supabase.auth.signUp({ email, password });
+        // Sign up doctor
+        const { data, error } = await supabase.auth.signUp({ 
+          email: cleanEmail, 
+          password 
+        });
         if (error) throw error;
         if (data?.session) {
           setSession(data.session);
           setPinMode("setup");
         } else {
-          setAuthError("Перевірте вашу пошту для підтвердження або увійдіть!");
+          // If Supabase sends confirmation email, try signing in immediately or notify
+          const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password
+          });
+          if (signInData?.session) {
+            setSession(signInData.session);
+            setPinMode("setup");
+          } else {
+            setAuthError("Акаунт створено! Перевірте пошту або увійдіть, якщо підтвердження вимкнено в Supabase.");
+          }
         }
       } else {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
         if (error) throw error;
         setSession(data.session);
         const savedPin = localStorage.getItem("mri_doctor_pin");

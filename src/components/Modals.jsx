@@ -1,7 +1,7 @@
 import React from "react";
 import { AppContext } from "../context/AppContext.jsx";
 import { P } from "../styles/styles.js";
-import { X, FileText, Clipboard, Save, Download, Brain } from "lucide-react";
+import { X, FileText, Clipboard, Save, Download, Brain, UserPlus, Trash2, ShieldCheck } from "lucide-react";
 import { ZONES } from "../constants/anatomy.js";
 import { supabase } from "../services/supabase.js";
 
@@ -66,16 +66,62 @@ export function ReportModal() {
 }
 
 export function SettingsModal() {
-  const { showSet, setShowSet, apiKeyIn, setApiKeyIn, aiModel, setAiModel, saveKey } = React.useContext(AppContext);
+  const { showSet, setShowSet, apiKeyIn, setApiKeyIn, aiModel, setAiModel, saveKey, flash } = React.useContext(AppContext);
+  const [allowedDoctors, setAllowedDoctors] = React.useState(["sevasteev88@gmail.com"]);
+  const [newDoctorEmail, setNewDoctorEmail] = React.useState("");
+
+  React.useEffect(() => {
+    try {
+      const stored = localStorage.getItem("mri_allowed_doctors");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) setAllowedDoctors(parsed);
+      }
+    } catch {}
+  }, [showSet]);
+
+  const addDoctor = () => {
+    const email = newDoctorEmail.trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      flash("Введіть коректний email");
+      return;
+    }
+    if (allowedDoctors.map(d => d.toLowerCase()).includes(email)) {
+      flash("Цей лікар вже у списку");
+      return;
+    }
+    const updated = [...allowedDoctors, email];
+    setAllowedDoctors(updated);
+    try { localStorage.setItem("mri_allowed_doctors", JSON.stringify(updated)); } catch {}
+    setNewDoctorEmail("");
+    flash(`Лікаря ${email} додано до білого списку!`);
+  };
+
+  const removeDoctor = (emailToRemove) => {
+    if (emailToRemove.toLowerCase() === "sevasteev88@gmail.com") {
+      flash("Головного адміністратора не можна видалити");
+      return;
+    }
+    const updated = allowedDoctors.filter(d => d.toLowerCase() !== emailToRemove.toLowerCase());
+    setAllowedDoctors(updated);
+    try { localStorage.setItem("mri_allowed_doctors", JSON.stringify(updated)); } catch {}
+    flash("Лікаря видалено зі списку");
+  };
+
   if (!showSet) return null;
 
   return (
     <div style={P.ov} onClick={() => setShowSet(false)}>
-      <div style={P.pan} onClick={e => e.stopPropagation()}>
-        <h3 style={P.panT}>Налаштування</h3>
+      <div style={{ ...P.pan, maxWidth: 440, maxHeight: "90vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ ...P.panT, margin: 0 }}>Налаштування</h3>
+          <button onClick={() => setShowSet(false)} style={{ background: "none", border: "none", color: "#8b919c", cursor: "pointer" }}><X size={18} /></button>
+        </div>
+
         <label style={P.lb}>Gemini API Key</label>
         <input type="password" value={apiKeyIn} onChange={e => setApiKeyIn(e.target.value)} placeholder="AIza..." style={P.inp} />
         <p style={P.ht}>Отримайте на <span style={{ color: "#06b6d4" }}>ai.google.dev</span></p>
+
         <label style={{ ...P.lb, marginTop: 14 }}>Модель ІІ</label>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <button onClick={() => { setAiModel("gemini-2.5-pro"); try { localStorage.setItem("mri-model", "gemini-2.5-pro"); } catch {} }} style={{ ...P.sm, padding: "10px 12px", textAlign: "left", justifyContent: "flex-start", background: aiModel === "gemini-2.5-pro" ? "rgba(6,182,212,.14)" : "rgba(255,255,255,.04)", border: aiModel === "gemini-2.5-pro" ? "1px solid rgba(6,182,212,.3)" : "1px solid rgba(255,255,255,.07)" }}>
@@ -85,7 +131,49 @@ export function SettingsModal() {
             <div><p style={{ fontSize: 13, fontWeight: 600, color: aiModel === "gemini-2.5-flash" ? "#06b6d4" : "#e2e8f0" }}>Gemini 2.5 Flash {aiModel === "gemini-2.5-flash" && "✓"}</p><p style={{ fontSize: 10, color: "#64748b" }}>Швидше та дешевше · для рутинного огляду</p></div>
           </button>
         </div>
-        <button onClick={saveKey} style={{ ...P.pri, marginTop: 14 }}>Зберегти</button>
+
+        {/* ALLOWED DOCTORS WHITELIST */}
+        <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,.08)" }}>
+          <label style={{ ...P.lb, display: "flex", alignItems: "center", gap: 5, color: "#4ec99b" }}>
+            <ShieldCheck size={14} /> Дозволені лікарі (Whitelist)
+          </label>
+          <p style={{ fontSize: 11, color: "#8b919c", marginBottom: 8 }}>
+            Тільки ці пошти мають право входу в робоче місце:
+          </p>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+            {allowedDoctors.map(doc => (
+              <div key={doc} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#0b0e14", padding: "6px 10px", borderRadius: 6, border: "1px solid rgba(255,255,255,.06)" }}>
+                <span style={{ fontSize: 12, color: doc === "sevasteev88@gmail.com" ? "#4aa3df" : "#cbd5e1" }}>
+                  {doc} {doc === "sevasteev88@gmail.com" && <span style={{ fontSize: 10, color: "#4aa3df" }}>(Admin)</span>}
+                </span>
+                {doc !== "sevasteev88@gmail.com" && (
+                  <button onClick={() => removeDoctor(doc)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", padding: 2 }}>
+                    <Trash2 size={13} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 6 }}>
+            <input 
+              type="email" 
+              placeholder="Email нового колеги..." 
+              value={newDoctorEmail} 
+              onChange={e => setNewDoctorEmail(e.target.value)}
+              style={{ ...P.inp, padding: "7px 10px", fontSize: 12, flex: 1 }}
+            />
+            <button 
+              onClick={addDoctor} 
+              style={{ ...P.sm, background: "rgba(78,201,155,.15)", color: "#4ec99b", border: "1px solid rgba(78,201,155,.3)", padding: "0 12px", whiteSpace: "nowrap" }}
+            >
+              <UserPlus size={13} style={{ marginRight: 4 }} /> Додати
+            </button>
+          </div>
+        </div>
+
+        <button onClick={saveKey} style={{ ...P.pri, marginTop: 18 }}>Зберегти налаштування</button>
       </div>
     </div>
   );
