@@ -4,7 +4,7 @@ import { P } from "../styles/styles.js";
 import { 
   ArrowLeft, CheckCircle, BookOpen, Columns, FileText, 
   Save, Star, Eye, Trash2, Info, ExternalLink, Paperclip, 
-  Upload, Brain, Mic, Shield, Archive, X 
+  Upload, Brain, Mic, Shield, Archive, X, ScanText 
 } from "lucide-react";
 import { ZONES } from "../constants/anatomy.js";
 import { confColor, radioUrl } from "../utils/helpers.js";
@@ -18,7 +18,7 @@ export default function Results() {
     goToSlice, attachIn, reviewConclusion, reviewLoading, setViewImg,
     handleAttachment, recording, stopVoice, startVoice, recRef, setRecording,
     setShowReport, setReportText, conclusionReview, confirmConclusion,
-    archiveStudy, deleteStudy
+    archiveStudy, deleteStudy, extractConclusionText, ocrLoading
   } = React.useContext(AppContext);
 
   const f = study?.findings || [];
@@ -375,9 +375,19 @@ export default function Results() {
             <Upload size={14} style={{ marginRight: 4 }} /> Додати файл (фото/PDF)
           </button>
           {(study?.attachments || []).length > 0 && (
-            <button onClick={reviewConclusion} disabled={reviewLoading} style={{ ...P.sm, padding: "8px 14px", fontSize: 12, background: "rgba(139,92,246,.1)", border: "1px solid rgba(139,92,246,.2)", color: "#a78bfa" }}>
-              {reviewLoading ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⏳</span> Аналіз...</> : <><Brain size={14} style={{ marginRight: 4 }} /> ІІ оцінка заключення</>}
-            </button>
+            <>
+              <button 
+                onClick={extractConclusionText} 
+                disabled={ocrLoading} 
+                style={{ ...P.sm, padding: "8px 14px", fontSize: 12, background: "rgba(6,182,212,.12)", border: "1px solid rgba(6,182,212,.25)", color: "#06b6d4" }}
+                title="Розпізнати текст висновку з фото та перенести в картку пацієнта"
+              >
+                {ocrLoading ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⏳</span> Розпізнавання OCR...</> : <><ScanText size={14} style={{ marginRight: 4 }} /> Розпізнати текст через ІІ</>}
+              </button>
+              <button onClick={reviewConclusion} disabled={reviewLoading} style={{ ...P.sm, padding: "8px 14px", fontSize: 12, background: "rgba(139,92,246,.1)", border: "1px solid rgba(139,92,246,.2)", color: "#a78bfa" }}>
+                {reviewLoading ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⏳</span> Аналіз...</> : <><Brain size={14} style={{ marginRight: 4 }} /> ІІ оцінка заключення</>}
+              </button>
+            </>
           )}
           <input ref={attachIn} type="file" multiple accept="image/*,application/pdf" style={{ display: "none" }} onChange={e => handleAttachment(e.target.files)} />
         </div>

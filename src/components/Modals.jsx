@@ -115,27 +115,53 @@ export function ImageViewModal() {
       >
         <button onClick={() => setViewImg(null)} style={P.clX} title="Закрити"><X size={15} /></button>
         
-        <div style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid rgba(255,255,255,.07)" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "#f1f5f9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70vw" }}>
+        <div style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, paddingBottom: 8, borderBottom: "1px solid rgba(255,255,255,.07)" }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#f1f5f9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60vw" }}>
             {viewImg.name || "Перегляд зображення"}
           </span>
-          <a 
-            href={viewImg.data} 
-            download={viewImg.name || "mri_image.png"} 
-            target="_blank" 
-            rel="noreferrer"
-            style={{ fontSize: 11, color: "#4aa3df", display: "flex", alignItems: "center", gap: 4, textDecoration: "none", background: "rgba(74,163,223,.12)", padding: "4px 8px", borderRadius: 4 }}
-          >
-            Відкрити оригінал ↗
-          </a>
+          {viewImg.data && viewImg.data.startsWith("data:") && (
+            <button 
+              type="button"
+              onClick={() => {
+                const w = window.open("");
+                if (w) {
+                  w.document.write(`<title>${viewImg.name || "Зображення"}</title><body style="margin:0;background:#0c0e12;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${viewImg.data}" style="max-width:100%;max-height:100vh;object-fit:contain" /></body>`);
+                }
+              }}
+              style={{
+                fontSize: 11,
+                color: "#4aa3df",
+                background: "rgba(74,163,223,.14)",
+                border: "1px solid rgba(74,163,223,.3)",
+                padding: "5px 10px",
+                borderRadius: 5,
+                cursor: "pointer",
+                userSelect: "none",
+                display: "flex",
+                alignItems: "center",
+                gap: 4
+              }}
+            >
+              Відкрити оригінал ↗
+            </button>
+          )}
         </div>
 
-        <div style={{ flex: 1, overflow: "auto", display: "flex", alignItems: "center", justifyContent: "center", background: "#090b0e", borderRadius: 8, padding: 6, minWidth: 280, minHeight: 200, maxHeight: "72vh" }}>
-          <img 
-            src={viewImg.data} 
-            alt={viewImg.name || ""} 
-            style={{ maxWidth: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: 4, display: "block" }} 
-          />
+        <div style={{ flex: 1, overflow: "auto", display: "flex", alignItems: "center", justifyContent: "center", background: "#090b0e", borderRadius: 8, padding: 8, minWidth: 280, minHeight: 200, maxHeight: "72vh", width: "100%" }}>
+          {viewImg.data && viewImg.data.startsWith("data:") ? (
+            <img 
+              src={viewImg.data} 
+              alt={viewImg.name || ""} 
+              style={{ maxWidth: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: 4, display: "block" }} 
+            />
+          ) : (
+            <div style={{ padding: 24, textAlign: "center", color: "#94a3b8" }}>
+              <p style={{ fontSize: 13, color: "#f59e0b", marginBottom: 6, fontWeight: 600 }}>Файл збережено локально на іншому пристрої</p>
+              <p style={{ fontSize: 11, lineHeight: 1.5, maxWidth: 360 }}>
+                Тіло зображення не було завантажено в хмару через великий розмір оригінального фото. Використовуйте кнопку <b>«Розпізнати текст через ІІ»</b> на телефоні або прикріпіть файл повторно.
+              </p>
+            </div>
+          )}
         </div>
 
         <input

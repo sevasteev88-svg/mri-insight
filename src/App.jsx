@@ -10,9 +10,10 @@ import RadioScreen from "./components/RadioScreen.jsx";
 import Loading from "./components/Loading.jsx";
 import Results from "./components/Results.jsx";
 import { SettingsModal, ImageViewModal, ReportModal, RefPreviewModal } from "./components/Modals.jsx";
+import { AuthModal } from "./components/AuthModal.jsx";
 
 function AppContent() {
-  const { scr, setScr, toast } = useContext(AppContext);
+  const { scr, setScr, toast, isLocked, setIsLocked } = useContext(AppContext);
 
   return (
     <div style={P.app}>
@@ -23,6 +24,9 @@ function AppContent() {
       {scr === "radio" && <RadioScreen setScr={setScr} />}
       {scr === "loading" && <Loading />}
       {scr === "results" && <Results />}
+
+      {/* Doctor Authentication & Lock Screen */}
+      <AuthModal isLocked={isLocked} setIsLocked={setIsLocked} />
 
       {/* Shared Modals */}
       <SettingsModal />

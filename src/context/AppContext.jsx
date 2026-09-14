@@ -4,7 +4,7 @@ import { supabase } from "../services/supabase.js";
 import { openDB, dbGet, dbPut, dbGetAll } from "../services/db.js";
 import { ZONES, parseSeriesKey, formatSeriesLabel } from "../constants/anatomy.js";
 import { getSysPromptAnalyze, getPromptRoi, getPromptManual } from "../constants/prompts.js";
-import { anonymizeImage, collectZoneMaterials, confColor } from "../utils/helpers.js";
+import { anonymizeImage, collectZoneMaterials, confColor, compressImage } from "../utils/helpers.js";
 import { extractDicomMetadata } from "../utils/dicomMeta.js";
 import { STRUCTURED_KB } from "../constants/anatomy_kb.js";
 
@@ -12,8 +12,8 @@ export const AppContext = createContext();
 
 export function AppProvider({ children }) {
   const [cloudSyncStatus, setCloudSyncStatus] = useState("online");
-
-    const [scr, setScr] = useState("dash");
+  const [isLocked, setIsLocked] = useState(true);
+  const [scr, setScr] = useState("dash");
   const [apiKey, setApiKey] = useState("");
   const [archiveHandle, setArchiveHandle] = useState(null);
   const [archiveStatus, setArchiveStatus] = useState("none"); // none, prompt, ready
@@ -661,11 +661,20 @@ const INITIAL_KB = {
     if (study?.id === id) setScr("dash");
   };
 
+  const [ocrLoading, setOcrLoading] = useState(false);
+
   const handleAttachment = async (files) => {
     if (!study) return;
     const attachments = [...(study.attachments || [])];
     for (const file of Array.from(files)) {
-      const dataUrl = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result); r.readAsDataURL(file); });
+      let dataUrl = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result); r.readAsDataURL(file); });
+      if (file.type.startsWith("image/")) {
+        try {
+          dataUrl = await compressImage(dataUrl, 1600, 0.82);
+        } catch (e) {
+          console.warn("Image compression error:", e);
+        }
+      }
       attachments.push({ id: Date.now() + Math.random(), name: file.name, type: file.type, data: dataUrl, ts: Date.now() });
     }
     const updatedStudy = { ...study, attachments };
@@ -696,6 +705,103 @@ const INITIAL_KB = {
     }
 
     flash(`Додано ${files.length} файл(ів) та синхронізовано з хмарою!`);
+  };
+
+  // Extract text from attached center's report via Gemini OCR and append to clinical card / doctorNotes
+  const extractConclusionText = async () => {
+    if (!apiKey) {
+      flash("Будь ласка, вкажіть Gemini API ключ у налаштуваннях");
+      return;
+    }
+    const attachments = (study?.attachments || []).filter(a => a.data && (a.type?.startsWith("image/") || a.data.startsWith("data:image/") || a.type === "application/pdf" || a.data.startsWith("data:application/pdf")));
+    if (attachments.length === 0) {
+      flash("Прикріпіть фото або PDF заключення МРТ центру");
+      return;
+    }
+
+    setOcrLoading(true);
+    try {
+      const parts = [{
+        text: `Ти медичний секретар та асистент радіолога. Перед тобою фотографія або скан офіційного висновку (протоколу) МРТ діагностичного центру.
+Завдання:
+1. Зчитай весь друкований/рукописний текст заключення (OCR).
+2. Оформи його красиво та структуровано українською мовою з чіткими медичними розділами:
+--- ЗАКЛЮЧЕННЯ МРТ ЦЕНТРУ ---
+• Пацієнт / Дата / Апарат / Контраст (якщо вказано)
+• Опис послідовностей та зон (Протокол дослідження)
+• Знахідки та виявлені зміни (структуровано за зв'язками, менісками, суглобовими поверхнями тощо)
+• ВИСНОВОК ЦЕНТРУ (дослівно або точно за змістом)
+
+Виводь тільки структурований текст висновку, без зайвих вступних слів та привітань.`
+      }];
+
+      for (const att of attachments) {
+        if (att.data && att.data.includes(",")) {
+          const mime = att.type || (att.data.startsWith("data:image/png") ? "image/png" : att.data.startsWith("data:application/pdf") ? "application/pdf" : "image/jpeg");
+          parts.push({
+            inline_data: {
+              mime_type: mime.startsWith("application/pdf") ? "application/pdf" : "image/jpeg",
+              data: att.data.split(",")[1]
+            }
+          });
+        }
+      }
+
+      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 4096 }
+        })
+      });
+
+      const data = await resp.json();
+      if (data?.error) throw new Error(data.error.message);
+
+      const extractedText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      if (!extractedText.trim()) throw new Error("Не вдалося розпізнати текст на зображенні");
+
+      const existingNotes = study.doctorNotes || "";
+      const updatedNotes = existingNotes 
+        ? `${existingNotes}\n\n${extractedText}` 
+        : extractedText;
+
+      const updatedStudy = { ...study, doctorNotes: updatedNotes };
+      setStudy(updatedStudy);
+
+      // Save locally
+      try { await dbPut("studies", String(study.id), updatedStudy); } catch {}
+
+      // Save to Supabase
+      try {
+        const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
+        if (isUuid) {
+          await supabase.from("studies").update({
+            findings: [
+              ...(study.findings || []).filter(item => !item?._extra),
+              {
+                _extra: {
+                  doctorNotesText: updatedNotes,
+                  attachments: study.attachments || [],
+                  conclusionReview: conclusionReview || study.conclusionReview || null
+                }
+              }
+            ],
+            updated_at: new Date().toISOString()
+          }).eq("id", study.id);
+        }
+      } catch (cErr) {
+        console.warn("Supabase ocr sync error:", cErr);
+      }
+
+      flash("Текст заключення успішно розпізнано та додано до картки!");
+    } catch (err) {
+      console.error(err);
+      flash(`Помилка OCR: ${err.message || err}`);
+    } finally {
+      setOcrLoading(false);
+    }
   };
 
   // AI review of center's conclusion
@@ -1636,6 +1742,7 @@ ${notes ? notes : "Нотаток немає. Опиши абсолютну но
     startVoice, stopVoice,
     newStudy, loadStudy, archiveStudy, unarchiveStudy, deleteStudy,
     handleAttachment, reviewConclusion, confirmConclusion, getPastCorrections,
+    extractConclusionText, ocrLoading,
     toolMouseDown, toolMouseMove, toolMouseUp,
     roiMouseDown, roiMouseMove, roiMouseUp,
     analyzeRoi, askManualAnatomy,
@@ -1644,7 +1751,8 @@ ${notes ? notes : "Нотаток немає. Опиши абсолютну но
     analyze, generateReport, generateAiReport,
     onViewerWheel, resetZoom, onViewerPanStart, onViewerPanMove, onViewerPanEnd,
     loadArchive, linkArchive, restoreArchiveAccess, unlinkArchive, openPatientFromArchive,
-    fetchCloudStudies, syncingCloud
+    fetchCloudStudies, syncingCloud,
+    isLocked, setIsLocked
   };
 
   return (

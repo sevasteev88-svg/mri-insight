@@ -63,3 +63,39 @@ export const confColor = (l) => {
   if (l >= 60) return { c: "#eab308", bg: "rgba(234,179,8,.12)" };
   return { c: "#ef4444", bg: "rgba(239,68,68,.12)" };
 };
+
+export function compressImage(dataUrl, maxDimension = 1600, quality = 0.8) {
+  return new Promise(res => {
+    if (!dataUrl || typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
+      res(dataUrl);
+      return;
+    }
+    const img = new window.Image();
+    img.onload = () => {
+      try {
+        let w = img.width;
+        let h = img.height;
+        if (w > maxDimension || h > maxDimension) {
+          if (w > h) {
+            h = Math.round((h * maxDimension) / w);
+            w = maxDimension;
+          } else {
+            w = Math.round((w * maxDimension) / h);
+            h = maxDimension;
+          }
+        }
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        const ctx = c.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        res(c.toDataURL("image/jpeg", quality));
+      } catch (e) {
+        res(dataUrl);
+      }
+    };
+    img.onerror = () => res(dataUrl);
+    img.src = dataUrl;
+  });
+}
+

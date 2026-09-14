@@ -1,7 +1,7 @@
 import React from "react";
 import { AppContext } from "../context/AppContext.jsx";
 import { P } from "../styles/styles.js";
-import { Brain, Settings, AlertCircle, Plus, BookOpen, ExternalLink, Archive, Trash2, RotateCcw, Folder, User, X, ChevronRight, Cloud, CloudOff, RefreshCw } from "lucide-react";
+import { Brain, Settings, AlertCircle, Plus, BookOpen, ExternalLink, Archive, Trash2, RotateCcw, Folder, User, X, ChevronRight, Cloud, CloudOff, RefreshCw, Lock } from "lucide-react";
 import { ZONES, ZONE_GROUPS } from "../constants/anatomy.js";
 import TI from "./TI.jsx";
 
@@ -12,7 +12,8 @@ export default function Dash() {
     newStudy, loadStudy, archiveStudy, unarchiveStudy, deleteStudy,
     archiveStatus, archiveLoading, archivePatients, archiveHandle,
     unlinkArchive, linkArchive, restoreArchiveAccess, openPatientFromArchive,
-    cloudSyncStatus, fetchCloudStudies, syncingCloud
+    cloudSyncStatus, fetchCloudStudies, syncingCloud,
+    setIsLocked
   } = React.useContext(AppContext);
 
   return (
@@ -58,7 +59,8 @@ export default function Dash() {
           <span style={{ fontSize: 11, color: "#4aa3df", background: "#15324a", padding: "4px 10px", borderRadius: 4, fontFamily: "'JetBrains Mono',monospace" }}>
             {aiModel === "gemini-2.5-pro" ? "GEMINI 2.5 PRO" : "GEMINI 2.5 FLASH"}
           </span>
-          <button onClick={() => setShowSet(true)} style={P.iBtn}><Settings size={18} /></button>
+          <button onClick={() => setShowSet(true)} style={P.iBtn} title="Налаштування"><Settings size={18} /></button>
+          <button onClick={() => setIsLocked(true)} style={{ ...P.iBtn, color: "#f87171", background: "rgba(239,68,68,.1)" }} title="Заблокувати робоче місце"><Lock size={17} /></button>
         </div>
       </div>
 
