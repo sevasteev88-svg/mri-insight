@@ -1,4 +1,4 @@
-﻿import React from "react";
+import React from "react";
 import { AppContext } from "../context/AppContext.jsx";
 import { P } from "../styles/styles.js";
 import { X, FileText, Clipboard, Save, Download, Brain } from "lucide-react";
@@ -97,10 +97,47 @@ export function ImageViewModal() {
 
   return (
     <div style={P.ov} onClick={() => setViewImg(null)}>
-      <div style={{ position: "relative", maxWidth: "92vw", maxHeight: "90vh", display: "flex", flexDirection: "column", alignItems: "center" }} onClick={e => e.stopPropagation()}>
-        <button onClick={() => setViewImg(null)} style={P.clX}><X size={14} /></button>
-        <img src={viewImg.data} alt="" style={{ maxWidth: "100%", maxHeight: "70vh", borderRadius: 7, objectFit: "contain" }} />
-        <p style={{ fontSize: 11, color: "#64748b", textAlign: "center", marginTop: 4 }}>{viewImg.name}</p>
+      <div 
+        style={{ 
+          position: "relative", 
+          maxWidth: "96vw", 
+          maxHeight: "92vh", 
+          background: "#13161c", 
+          border: "1px solid rgba(255,255,255,.12)", 
+          borderRadius: 12, 
+          padding: 16, 
+          display: "flex", 
+          flexDirection: "column", 
+          alignItems: "center",
+          boxShadow: "0 20px 40px rgba(0,0,0,.8)"
+        }} 
+        onClick={e => e.stopPropagation()}
+      >
+        <button onClick={() => setViewImg(null)} style={P.clX} title="Закрити"><X size={15} /></button>
+        
+        <div style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid rgba(255,255,255,.07)" }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#f1f5f9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70vw" }}>
+            {viewImg.name || "Перегляд зображення"}
+          </span>
+          <a 
+            href={viewImg.data} 
+            download={viewImg.name || "mri_image.png"} 
+            target="_blank" 
+            rel="noreferrer"
+            style={{ fontSize: 11, color: "#4aa3df", display: "flex", alignItems: "center", gap: 4, textDecoration: "none", background: "rgba(74,163,223,.12)", padding: "4px 8px", borderRadius: 4 }}
+          >
+            Відкрити оригінал ↗
+          </a>
+        </div>
+
+        <div style={{ flex: 1, overflow: "auto", display: "flex", alignItems: "center", justifyContent: "center", background: "#090b0e", borderRadius: 8, padding: 6, minWidth: 280, minHeight: 200, maxHeight: "72vh" }}>
+          <img 
+            src={viewImg.data} 
+            alt={viewImg.name || ""} 
+            style={{ maxWidth: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: 4, display: "block" }} 
+          />
+        </div>
+
         <input
           value={viewImg.caption || ""}
           onChange={e => {
@@ -109,16 +146,16 @@ export function ImageViewModal() {
             setRefs(p => {
               const updated = {};
               for (const [zone, imgs] of Object.entries(p)) {
-                updated[zone] = imgs.map(im => im.id === viewImg.id ? { ...im, caption: cap } : im);
+                updated[zone] = (imgs || []).map(im => im.id === viewImg.id ? { ...im, caption: cap } : im);
               }
               return updated;
             });
           }}
-          placeholder="Додати опис (наприклад: розрив ПКС, набряк кісткового мозку...)"
-          style={{ ...P.inp, marginTop: 8, maxWidth: 500, textAlign: "center", fontSize: 12, background: "rgba(255,255,255,.08)" }}
+          placeholder="Додати опис до знімка..."
+          style={{ ...P.inp, marginTop: 10, maxWidth: 500, textAlign: "center", fontSize: 12, background: "rgba(255,255,255,.06)" }}
           onClick={e => e.stopPropagation()}
         />
-        {viewImg.caption && <p style={{ fontSize: 10, color: "#10b981", marginTop: 3 }}>✓ Опис збережено</p>}
+        {viewImg.caption && <p style={{ fontSize: 10, color: "#10b981", marginTop: 4 }}>✓ Опис збережено</p>}
       </div>
     </div>
   );
