@@ -383,43 +383,48 @@ export default function Results() {
         </div>
         {(study?.attachments || []).length > 0 && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(120px,1fr))", gap: 8, marginBottom: 12 }}>
-            {study.attachments.map((att) => (
-              <div key={att.id} style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 8, overflow: "hidden", position: "relative" }}>
-                {att.type.startsWith("image/") ? (
-                  <img src={att.data} alt={att.name} style={{ width: "100%", display: "block", cursor: "pointer", borderRadius: "8px 8px 0 0" }} onClick={() => setViewImg(att)} />
-                ) : (
-                  <div onClick={() => { const w = window.open(); w.document.write(`<iframe src="${att.data}" style="width:100%;height:100vh;border:none"></iframe>`); }} style={{ height: 100, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: "rgba(245,158,11,.06)" }}>
-                    <FileText size={28} style={{ color: "#f59e0b" }} />
+            {study.attachments.filter(Boolean).map((att) => {
+              const isImage = (att.type && typeof att.type === "string" && att.type.startsWith("image/")) || 
+                              (att.data && typeof att.data === "string" && att.data.startsWith("data:image/")) ||
+                              (att.name && /\.(png|jpe?g|webp|gif)$/i.test(att.name));
+              return (
+                <div key={att.id || att.name} style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 8, overflow: "hidden", position: "relative" }}>
+                  {isImage ? (
+                    <img src={att.data} alt={att.name || "Вкладення"} style={{ width: "100%", display: "block", cursor: "pointer", borderRadius: "8px 8px 0 0" }} onClick={() => setViewImg(att)} />
+                  ) : (
+                    <div onClick={() => { if (att.data) { const w = window.open(); w.document.write(`<iframe src="${att.data}" style="width:100%;height:100vh;border:none"></iframe>`); } }} style={{ height: 100, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: "rgba(245,158,11,.06)" }}>
+                      <FileText size={28} style={{ color: "#f59e0b" }} />
+                    </div>
+                  )}
+                  <div style={{ padding: "4px 6px" }}>
+                    <p style={{ fontSize: 10, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{att.name || "Файл"}</p>
                   </div>
-                )}
-                <div style={{ padding: "4px 6px" }}>
-                  <p style={{ fontSize: 10, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{att.name}</p>
-                </div>
-                <button onClick={async () => {
-                  const upd = (study.attachments || []).filter(a => a.id !== att.id);
-                  setStudy(p => ({ ...p, attachments: upd }));
-                  try { await dbPut("studies", String(study.id), { ...study, attachments: upd }); } catch {}
-                  try {
-                    const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
-                    if (isUuid) {
-                      await supabase.from("studies").update({
-                        findings: [
-                          ...(study.findings || []).filter(item => !item?._extra),
-                          {
-                            _extra: {
-                              doctorNotesText: study.doctorNotes || "",
-                              attachments: upd,
-                              conclusionReview: conclusionReview || study.conclusionReview || null
+                  <button onClick={async () => {
+                    const upd = (study.attachments || []).filter(a => a.id !== att.id);
+                    setStudy(p => ({ ...p, attachments: upd }));
+                    try { await dbPut("studies", String(study.id), { ...study, attachments: upd }); } catch {}
+                    try {
+                      const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
+                      if (isUuid) {
+                        await supabase.from("studies").update({
+                          findings: [
+                            ...(study.findings || []).filter(item => !item?._extra),
+                            {
+                              _extra: {
+                                doctorNotesText: study.doctorNotes || "",
+                                attachments: upd,
+                                conclusionReview: conclusionReview || study.conclusionReview || null
+                              }
                             }
-                          }
-                        ],
-                        updated_at: new Date().toISOString()
-                      }).eq("id", study.id);
-                    }
-                  } catch {}
-                }} style={{ position: "absolute", top: 3, right: 3, background: "rgba(0,0,0,.7)", border: "none", borderRadius: 4, padding: 2, color: "#ef4444", cursor: "pointer" }}><X size={10} /></button>
-              </div>
-            ))}
+                          ],
+                          updated_at: new Date().toISOString()
+                        }).eq("id", study.id);
+                      }
+                    } catch {}
+                  }} style={{ position: "absolute", top: 3, right: 3, background: "rgba(0,0,0,.7)", border: "none", borderRadius: 4, padding: 2, color: "#ef4444", cursor: "pointer" }}><X size={10} /></button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
