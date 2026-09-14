@@ -6,7 +6,7 @@ import { ZONES, parseSeriesKey, formatSeriesLabel } from "../constants/anatomy.j
 import { getSysPromptAnalyze, getPromptRoi, getPromptManual } from "../constants/prompts.js";
 import { anonymizeImage, collectZoneMaterials, confColor, compressImage } from "../utils/helpers.js";
 import { extractDicomMetadata } from "../utils/dicomMeta.js";
-import { STRUCTURED_KB } from "../constants/anatomy_kb.js";
+import { STRUCTURED_KB, INITIAL_KB } from "../constants/anatomy_kb.js";
 
 export const AppContext = createContext();
 
@@ -112,27 +112,7 @@ export function AppProvider({ children }) {
   }, [scr, selZone, libTab]);
 
 
-const INITIAL_KB = {
-  c_spine: [{ id: "c_spine_1", title: "Класифікація гриж дисків", text: "Протрузія: ширина основи більша за випинання.\nЕкструзія: випинання більше за основу.\nСеквестр: відокремлений фрагмент.\nОцінюйте вплив на дуральний мішок та корінці." }],
-  l_spine: [
-    { id: "l_spine_1", title: "Дегенерація за Modic", text: "Modic I: набряк (T1 гіпо, T2 гіпер).\nModic II: жирова дегенерація (T1 гіпер, T2 гіпер/ізо).\nModic III: склероз (T1 гіпо, T2 гіпо)." },
-    { id: "l_spine_2", title: "Критерії гриж міжхребцевих дисків", text: "Протрузія: випинання < 50% окружності, основа ширша за глибину.\nЕкструзія: випинання більше за основу (ризик секвестрації).\nОцінюйте латеральний канал та компресію спинномозкового корінця." }
-  ],
-  shoulder: [
-    { id: "shoulder_1", title: "Обертальна манжета", text: "Супраспінатус — найчастіша локалізація розривів. Оцінюйте: частковий (суглобова/бурсальна поверхня) чи повношаровий. Звертайте увагу на ретракцію м'яза та жирову атрофію (за Goutallier)." },
-    { id: "shoulder_2", title: "Labrum та SLAP-ушкодження", text: "Верхня губа (SLAP): розрив на 10-2 годинах. Часто поєднується з відривом сухожилля біцепса. Оцінюйте аксіальні та косі коронарні PDFS." }
-  ],
-  knee: [
-    { id: "knee_1", title: "ПХЗ (ACL) — критерії розриву", text: "Повний розрив: відсутність безперервності волокон на сагіталі, симптом 'порожньої вирізки', kissing contusions латерального виростка стегна і заднього краю плато великогомілкової кістки." },
-    { id: "knee_2", title: "Меніски за Stoller", text: "Stoller I: точковий сигнал без контакту з поверхнею.\nStoller II: лінійний внутрішній сигнал (дегенерація).\nStoller III: істинний розрив — вихід гіперінтенсивної лінії на суглобову поверхню." }
-  ],
-  hip: [
-    { id: "hip_1", title: "ФАІ та вертлюжна губа", text: "CAM-деформація: асферичність переходу голівка-шийка (кут альфа > 55°).\nPincer: надмірне перекриття вертлюжної западини.\nРозрив губи: найчастіше передньо-верхній сегмент." }
-  ],
-  ankle: [
-    { id: "ankle_1", title: "Зв'язки латерального комплексу", text: "ATFL (передня таранно-малогомілкова) — ушкоджується першою при супінації. Оцінюйте аксіальний PDFS.\nCFL (п'ятково-малогомілкова) — коронарний та аксіальний зрізи." }
-  ]
-};
+
 
   const [syncingCloud, setSyncingCloud] = useState(false);
 
