@@ -64,7 +64,7 @@ export const confColor = (l) => {
   return { c: "#ef4444", bg: "rgba(239,68,68,.12)" };
 };
 
-export function compressImage(dataUrl, maxDimension = 1600, quality = 0.8) {
+export function compressImage(dataUrl, maxDimension = 2600, quality = 0.88) {
   return new Promise(res => {
     if (!dataUrl || typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
       res(dataUrl);
