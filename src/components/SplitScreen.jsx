@@ -5,8 +5,10 @@ import { ZONES, parseSeriesKey } from "../constants/anatomy.js";
 import { collectZoneMaterials } from "../utils/helpers.js";
 import { 
   ArrowLeft, Search, FileText, Crosshair, Star, ChevronLeft, ChevronRight, 
-  Mic, MicOff, Trash2, Link, Ruler, TriangleRight, Circle, Sun, Brain, AlertCircle, Eye, X, BookOpen 
+  Mic, MicOff, Trash2, Link, Ruler, TriangleRight, Circle, Sun, Brain, AlertCircle, Eye, X, BookOpen,
+  Calendar, History
 } from "lucide-react";
+import { dbGet } from "../services/db.js";
 
 export default function SplitScreen() {
   const context = React.useContext(AppContext);
@@ -28,7 +30,7 @@ export default function SplitScreen() {
     roiImgRef, flash, sortSlices, analyzeRoi, 
     onViewerWheel, resetZoom, onViewerPanStart, onViewerPanMove, onViewerPanEnd, 
     onWindowStart, onWindowMove, onWindowEnd, toolMouseDown, toolMouseMove, toolMouseUp, 
-    apiKey, aiModel 
+    apiKey, aiModel, studies
   } = context;
 
       const im = curImgs();
@@ -85,7 +87,44 @@ export default function SplitScreen() {
       }
     };
 
-    const compImgs = (rightMode === "compare" && compareSeriesKey && sortSlices(study?.series[compareSeriesKey])) || [];
+    // State for cross-study comparison
+    const [compareStudyId, setCompareStudyId] = React.useState(null);
+    const [compareStudyData, setCompareStudyData] = React.useState(null);
+    const [loadingCompareStudy, setLoadingCompareStudy] = React.useState(false);
+
+    // Load another study when compareStudyId changes
+    useEffect(() => {
+      if (!compareStudyId || compareStudyId === study?.id) {
+        setCompareStudyData(null);
+        return;
+      }
+      let isMounted = true;
+      (async () => {
+        setLoadingCompareStudy(true);
+        try {
+          const loaded = await dbGet("studies", String(compareStudyId));
+          if (isMounted && loaded) {
+            setCompareStudyData(loaded);
+            const keys = Object.keys(loaded.series || {});
+            if (keys.length > 0) {
+              setCompareSeriesKey(keys[0]);
+              setCompareIdx(0);
+            }
+          }
+        } catch (err) {
+          console.error("Error loading comparison study:", err);
+          flash("Помилка завантаження дослідження для порівняння");
+        } finally {
+          if (isMounted) setLoadingCompareStudy(false);
+        }
+      })();
+      return () => { isMounted = false; };
+    }, [compareStudyId, study?.id]);
+
+    // Determine which study's series are used on the right
+    const activeRightStudy = compareStudyData || study;
+    const rightSeriesObj = activeRightStudy?.series || {};
+    const compImgs = (rightMode === "compare" && compareSeriesKey && sortSlices(rightSeriesObj[compareSeriesKey])) || [];
 
     const navSlice = (dir) => { 
       setSplitIdx(p => {
@@ -572,10 +611,73 @@ export default function SplitScreen() {
             ) : (
               /* COMPARE MODE */
               <>
+                {/* Study Selector for Cross-Study / Longitudinal Comparison */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 4px 6px", borderBottom: "1px solid rgba(255,255,255,0.05)", marginBottom: 4 }}>
+                  <Calendar size={13} color="#4aa3df" />
+                  <span style={{ fontSize: 10, color: "#8b919c", whiteSpace: "nowrap" }}>Дослідження:</span>
+                  <select
+                    value={compareStudyId || ""}
+                    onChange={(e) => {
+                      const val = e.target.value ? Number(e.target.value) : null;
+                      setCompareStudyId(val);
+                      resetZoom("R");
+                    }}
+                    style={{
+                      flex: 1,
+                      background: "#13161c",
+                      border: "1px solid rgba(74,163,223,0.3)",
+                      borderRadius: 4,
+                      color: compareStudyId ? "#4aa3df" : "#e8eaed",
+                      fontSize: 10,
+                      padding: "3px 6px",
+                      outline: "none",
+                      cursor: "pointer"
+                    }}
+                  >
+                    <option value="">
+                      Поточне ({study?.date || "без дати"}) — {study?.patientName || "Пацієнт"}
+                    </option>
+                    {(() => {
+                      const currentPatient = (study?.patientName || "").trim().toLowerCase();
+                      const otherStudies = (studies || []).filter(s => s.id !== study?.id);
+                      // Sort same patient's studies first
+                      const samePatient = otherStudies.filter(s => (s.pn || "").trim().toLowerCase() === currentPatient);
+                      const differentPatient = otherStudies.filter(s => (s.pn || "").trim().toLowerCase() !== currentPatient);
+
+                      return (
+                        <>
+                          {samePatient.length > 0 && (
+                            <optgroup label="— Дослідження цього пацієнта (динаміка) —">
+                              {samePatient.map(s => (
+                                <option key={s.id} value={s.id}>
+                                  📅 {s.mriDate || s.d} · {ZONES[s.z]?.short || s.z} ({s.ic} зрізів)
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                          {differentPatient.length > 0 && (
+                            <optgroup label="— Інші пацієнти / дослідження —">
+                              {differentPatient.map(s => (
+                                <option key={s.id} value={s.id}>
+                                  {s.pn || "Анонім"} · {s.mriDate || s.d} · {ZONES[s.z]?.short || s.z}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </select>
+                  {loadingCompareStudy && (
+                    <span style={{ fontSize: 9, color: "#4aa3df", animation: "pulse 1s infinite" }}>Завантаження...</span>
+                  )}
+                </div>
+
                 <div style={{ display: "flex", gap: 3, flexWrap: "wrap", padding: "0 4px 4px" }}>
-                  {Object.entries(seriesCounts()).map(([k, cnt]) => {
-                    const { zone: sZone, seq, plane } = parseSeriesKey(k, study?.zone);
-                    const isMultiZone = (study?.zones && study.zones.length > 1);
+                  {Object.entries(rightSeriesObj).map(([k, a]) => {
+                    const cnt = a.length;
+                    const { zone: sZone, seq, plane } = parseSeriesKey(k, activeRightStudy?.zone);
+                    const isMultiZone = (activeRightStudy?.zones && activeRightStudy.zones.length > 1);
                     const zoneTag = isMultiZone && sZone && ZONES[sZone] ? `[${ZONES[sZone].short}] ` : "";
                     return (
                       <button key={k} onClick={() => { setCompareSeriesKey(k); setCompareIdx(0); resetZoom("R"); }}
@@ -590,8 +692,13 @@ export default function SplitScreen() {
                   style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomR.scale > 1 ? (panning ? "grabbing" : "grab") : "default", userSelect: "none" }}
                   onContextMenu={(e)=>e.preventDefault()} onMouseDown={(e) => { if (e.button === 2) { onWindowStart("R", e); return; } if (zoomR.scale > 1) onViewerPanStart("R", e); }}>
                   {compImgs[compareIdx] ? (
-                    <img src={compImgs[compareIdx].data} alt="" draggable={false}
-                      style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", filter: `brightness(${wlR.b}%) contrast(${wlR.c}%)`, transform: `translate(${zoomR.x}px, ${zoomR.y}px) scale(${zoomR.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
+                    <>
+                      <img src={compImgs[compareIdx].data} alt="" draggable={false}
+                        style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", filter: `brightness(${wlR.b}%) contrast(${wlR.c}%)`, transform: `translate(${zoomR.x}px, ${zoomR.y}px) scale(${zoomR.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
+                      <div style={{ position: "absolute", top: 6, left: 6, background: "rgba(0,0,0,0.75)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "2px 6px", fontSize: 9, color: "#e8eaed", fontFamily: "'JetBrains Mono',monospace", pointerEvents: "none" }}>
+                        <span style={{ color: "#4aa3df", fontWeight: 600 }}>📅 {activeRightStudy?.mriDate || activeRightStudy?.date || "—"}</span> · {compareSeriesKey ? parseSeriesKey(compareSeriesKey, activeRightStudy?.zone).seq + " " + parseSeriesKey(compareSeriesKey, activeRightStudy?.zone).plane : ""}
+                      </div>
+                    </>
                   ) : <span style={{ color: "#3a3f47", fontSize: 12 }}>Виберіть серію</span>}
                 </div>
                 {compImgs.length > 0 && (
