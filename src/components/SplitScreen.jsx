@@ -3,10 +3,11 @@ import { AppContext } from "../context/AppContext.jsx";
 import { P } from "../styles/styles.js";
 import { ZONES, parseSeriesKey } from "../constants/anatomy.js";
 import { collectZoneMaterials } from "../utils/helpers.js";
+import { calculateLocalizerLine } from "../utils/geometry.js";
 import { 
   ArrowLeft, Search, FileText, Crosshair, Star, ChevronLeft, ChevronRight, 
   Mic, MicOff, Trash2, Link, Ruler, TriangleRight, Circle, Sun, Brain, AlertCircle, Eye, X, BookOpen,
-  Calendar, History
+  Calendar, History, Layers
 } from "lucide-react";
 import { dbGet } from "../services/db.js";
 
@@ -148,6 +149,25 @@ export default function SplitScreen() {
         return nextR;
       });
     };
+
+    // State for localizer (cross-reference scout line)
+    const [showLocalizer, setShowLocalizer] = React.useState(true);
+
+    // Calculate scout / localizer lines
+    const leftSlice = im[splitIdx];
+    const rightSlice = compImgs[compareIdx];
+    const leftPlane = study?.activePlane;
+    const rightPlane = compareSeriesKey ? parseSeriesKey(compareSeriesKey, activeRightStudy?.zone).plane : null;
+
+    // Line to draw on Right viewer showing position of active Left slice
+    const localizerOnRight = (showLocalizer && rightMode === "compare" && leftSlice && rightSlice) 
+      ? calculateLocalizerLine(rightSlice, leftSlice, rightPlane, leftPlane, splitIdx, im.length)
+      : null;
+
+    // Line to draw on Left viewer showing position of active Right slice
+    const localizerOnLeft = (showLocalizer && rightMode === "compare" && leftSlice && rightSlice)
+      ? calculateLocalizerLine(leftSlice, rightSlice, leftPlane, rightPlane, compareIdx, compImgs.length)
+      : null;
 
     const navRef = (dir) => setRefIdx(p => Math.max(0, Math.min(refImgs.length - 1, p + dir)));
 
@@ -359,9 +379,41 @@ export default function SplitScreen() {
               {roi && zoomL.scale <= 1 && (
                 <div style={{ position: "absolute", left: `${roi.x * 100}%`, top: `${roi.y * 100}%`, width: `${roi.w * 100}%`, height: `${roi.h * 100}%`, border: "2px solid #e0a93b", background: "rgba(224,169,59,.12)", borderRadius: 3, pointerEvents: "none", boxShadow: "0 0 0 9999px rgba(0,0,0,.35)" }} />
               )}
-              {/* Measurements Layer */}
-              {zoomL.scale <= 1 && (measurements.length > 0 || activeMeasure || activeArea || activeAngle.length > 0) && (
+              {/* Localizer & Measurements Layer */}
+              {zoomL.scale <= 1 && (measurements.length > 0 || activeMeasure || activeArea || activeAngle.length > 0 || localizerOnLeft) && (
                 <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 10 }}>
+                  {/* Scout / Localizer Line (showing Right slice position on Left viewer) */}
+                  {localizerOnLeft && (
+                    <g>
+                      <line 
+                        x1={localizerOnLeft.x1 * 1000} 
+                        y1={localizerOnLeft.y1 * 1000} 
+                        x2={localizerOnLeft.x2 * 1000} 
+                        y2={localizerOnLeft.y2 * 1000} 
+                        stroke="#facc15" 
+                        strokeWidth="1.8" 
+                        vectorEffect="non-scaling-stroke" 
+                        strokeDasharray="8 4"
+                        style={{ filter: "drop-shadow(0px 0px 3px rgba(0,0,0,0.9))" }}
+                      />
+                      <circle cx={localizerOnLeft.x1 * 1000} cy={localizerOnLeft.y1 * 1000} r="3" fill="#facc15" />
+                      <circle cx={localizerOnLeft.x2 * 1000} cy={localizerOnLeft.y2 * 1000} r="3" fill="#facc15" />
+                      <text 
+                        x={((localizerOnLeft.x1 + localizerOnLeft.x2) / 2) * 1000} 
+                        y={((localizerOnLeft.y1 + localizerOnLeft.y2) / 2) * 1000} 
+                        fill="#facc15" 
+                        fontSize="20" 
+                        fontWeight="700" 
+                        fontFamily="'JetBrains Mono',monospace"
+                        style={{ textShadow: "1px 1px 3px #000, -1px -1px 3px #000" }} 
+                        dx="6" 
+                        dy="-6"
+                      >
+                        {rightPlane ? `${rightPlane.slice(0, 3)}: ${compareIdx + 1}` : `${compareIdx + 1}`}
+                      </text>
+                    </g>
+                  )}
+
                   {measurements.map((m, i) => {
                     if (m.type === "line") {
                       return (
@@ -436,6 +488,21 @@ export default function SplitScreen() {
                 <button onClick={() => { setToolMode("measure_area"); setRoi(null); setRoiResult(null); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "measure_area" ? "rgba(74,163,223,.18)" : "transparent", color: toolMode === "measure_area" ? "#4aa3df" : "#8b919c", border: "none" }} title="Площа (Еліпс)"><Circle size={12} /></button>
 
                 <button onClick={() => { setToolMode("window"); setRoi(null); setRoiResult(null); setMeasurements([]); }} style={{ ...P.sm, padding: "4px 8px", background: toolMode === "window" ? "rgba(74,163,223,.18)" : "transparent", color: toolMode === "window" ? "#4aa3df" : "#8b919c", border: "none" }} title="Контраст (W/L)"><Sun size={12} /></button>
+                
+                {/* Localizer (Scout lines) Toggle */}
+                <button 
+                  onClick={() => setShowLocalizer(!showLocalizer)} 
+                  style={{ 
+                    ...P.sm, 
+                    padding: "4px 8px", 
+                    background: showLocalizer ? "rgba(250,204,21,.18)" : "transparent", 
+                    color: showLocalizer ? "#facc15" : "#8b919c", 
+                    border: "none" 
+                  }} 
+                  title="Лінії зрізів (Локалізатор / Scout line)"
+                >
+                  <Layers size={12} />
+                </button>
               </div>
               <button onClick={scanSeries} disabled={aiScanning || im.length===0} style={{ ...P.sm, padding: "4px 8px", background: "rgba(139,92,246,.18)", color: "#8b5cf6", border: "none", marginRight: 8 }}>
                 {aiScanning ? "Сканування..." : "✨ AI Скан"}
@@ -695,6 +762,41 @@ export default function SplitScreen() {
                     <>
                       <img src={compImgs[compareIdx].data} alt="" draggable={false}
                         style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", filter: `brightness(${wlR.b}%) contrast(${wlR.c}%)`, transform: `translate(${zoomR.x}px, ${zoomR.y}px) scale(${zoomR.scale})`, transformOrigin: "center", transition: panning ? "none" : "transform .1s" }} />
+                      
+                      {/* Localizer Scout Line Layer on Right Viewer */}
+                      {zoomR.scale <= 1 && localizerOnRight && (
+                        <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 10 }}>
+                          <g>
+                            <line 
+                              x1={localizerOnRight.x1 * 1000} 
+                              y1={localizerOnRight.y1 * 1000} 
+                              x2={localizerOnRight.x2 * 1000} 
+                              y2={localizerOnRight.y2 * 1000} 
+                              stroke="#facc15" 
+                              strokeWidth="1.8" 
+                              vectorEffect="non-scaling-stroke" 
+                              strokeDasharray="8 4"
+                              style={{ filter: "drop-shadow(0px 0px 3px rgba(0,0,0,0.9))" }}
+                            />
+                            <circle cx={localizerOnRight.x1 * 1000} cy={localizerOnRight.y1 * 1000} r="3" fill="#facc15" />
+                            <circle cx={localizerOnRight.x2 * 1000} cy={localizerOnRight.y2 * 1000} r="3" fill="#facc15" />
+                            <text 
+                              x={((localizerOnRight.x1 + localizerOnRight.x2) / 2) * 1000} 
+                              y={((localizerOnRight.y1 + localizerOnRight.y2) / 2) * 1000} 
+                              fill="#facc15" 
+                              fontSize="20" 
+                              fontWeight="700" 
+                              fontFamily="'JetBrains Mono',monospace"
+                              style={{ textShadow: "1px 1px 3px #000, -1px -1px 3px #000" }} 
+                              dx="6" 
+                              dy="-6"
+                            >
+                              {leftPlane ? `${leftPlane.slice(0, 3)}: ${splitIdx + 1}` : `${splitIdx + 1}`}
+                            </text>
+                          </g>
+                        </svg>
+                      )}
+
                       <div style={{ position: "absolute", top: 6, left: 6, background: "rgba(0,0,0,0.75)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "2px 6px", fontSize: 9, color: "#e8eaed", fontFamily: "'JetBrains Mono',monospace", pointerEvents: "none" }}>
                         <span style={{ color: "#4aa3df", fontWeight: 600 }}>📅 {activeRightStudy?.mriDate || activeRightStudy?.date || "—"}</span> · {compareSeriesKey ? parseSeriesKey(compareSeriesKey, activeRightStudy?.zone).seq + " " + parseSeriesKey(compareSeriesKey, activeRightStudy?.zone).plane : ""}
                       </div>

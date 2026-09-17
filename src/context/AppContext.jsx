@@ -342,11 +342,26 @@ export function AppProvider({ children }) {
               ];
             }
 
+            let imageOrientationPatient = null;
+            const iopTag = image.getTag(0x0020, 0x0037); // Image Orientation (Patient)
+            if (iopTag && iopTag.value && iopTag.value.length >= 6) {
+              imageOrientationPatient = [
+                parseFloat(iopTag.value[0]),
+                parseFloat(iopTag.value[1]),
+                parseFloat(iopTag.value[2]),
+                parseFloat(iopTag.value[3]),
+                parseFloat(iopTag.value[4]),
+                parseFloat(iopTag.value[5])
+              ];
+            }
+
             const rawData = image.getInterpretedData();
-            if (rawData && image.getCols() > 0 && image.getRows() > 0) {
+            const cols = image.getCols();
+            const rows = image.getRows();
+            if (rawData && cols > 0 && rows > 0) {
               const c = document.createElement("canvas");
-              c.width = image.getCols();
-              c.height = image.getRows();
+              c.width = cols;
+              c.height = rows;
               const ctx = c.getContext("2d");
               const imgData = ctx.createImageData(c.width, c.height);
               let min = Infinity, max = -Infinity;
@@ -373,9 +388,9 @@ export function AppProvider({ children }) {
               }
               const minP = wc - ww / 2;
               for (let i = 0; i < rawData.length; i++) {
-                let val = rawData[i];
-                let n = ((val - minP) / ww) * 255;
-                if (n < 0) n = 0; if (n > 255) n = 255;
+                let n = ((rawData[i] - minP) / ww) * 255;
+                if (n < 0) n = 0;
+                if (n > 255) n = 255;
                 const idx = i * 4;
                 imgData.data[idx] = n; imgData.data[idx + 1] = n; imgData.data[idx + 2] = n; imgData.data[idx + 3] = 255;
               }
@@ -410,7 +425,20 @@ export function AppProvider({ children }) {
       processedCount++;
       const fin = (target === "patient" && anon) ? await anonymizeImage(d) : d;
       const zoneFinal = sliceZone || extractedMeta?.detectedZone || baseStudy?.zone || "knee";
-      const obj = { id: Date.now() + Math.random(), name: f.name, data: fin, ts: Date.now(), ps, instanceNumber, sliceLocation, imagePositionPatient, zone: zoneFinal };
+      const obj = { 
+        id: Date.now() + Math.random(), 
+        name: f.name, 
+        data: fin, 
+        ts: Date.now(), 
+        ps, 
+        instanceNumber, 
+        sliceLocation, 
+        imagePositionPatient, 
+        imageOrientationPatient,
+        rows: image?.getRows ? image.getRows() : undefined,
+        cols: image?.getCols ? image.getCols() : undefined,
+        zone: zoneFinal 
+      };
 
       if (target === "ref") {
         setRefs(p => ({ ...p, [selZone]: [...(p[selZone] || []), obj] }));
