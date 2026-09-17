@@ -233,289 +233,299 @@ export function AppProvider({ children }) {
   };
 
   const uploadImgs = async (files, target, initialStudy = null) => {
-    // Filter files: exclude known non-image files like DICOMDIR, desktop.ini, DS_Store
-    const list = Array.from(files).filter(f => {
-      const nm = f.name.toUpperCase();
-      if (nm === "DICOMDIR" || nm === "DESKTOP.INI" || nm === ".DS_STORE" || nm.endsWith(".TXT") || nm.endsWith(".PDF")) return false;
-      return true;
-    });
-
-    if (list.length === 0) return;
-    
-    let baseStudy = initialStudy || study;
-    let accumulatedSeries = { ...(baseStudy?.series || {}) };
-    let extractedMeta = null;
-    const detectedZonesSet = new Set();
-    if (baseStudy?.zones && Array.isArray(baseStudy.zones)) {
-      baseStudy.zones.forEach(z => detectedZonesSet.add(z));
-    } else if (baseStudy?.zone) {
-      detectedZonesSet.add(baseStudy.zone);
-    }
-
-    let processedCount = 0;
-
-    for (const f of list) {
-      let d = null;
-      let detectedSeq = "T2";
-      let detectedPlane = "Sag";
-      let sliceZone = null;
-      let ps = null;
-      let instanceNumber = null;
-      let sliceLocation = null;
-      let imagePositionPatient = null;
-      let isDicom = false;
-
-      // Attempt DICOM parsing for all files unless explicitly standard web images
-      const isStandardWebImage = f.type.startsWith("image/png") || f.type.startsWith("image/jpeg") || f.type.startsWith("image/webp");
-
-      if (!isStandardWebImage) {
-        try {
-          const buf = await f.arrayBuffer();
-          const data = new DataView(buf);
-          const image = daikon.Series.parseImage(data);
-          if (image) {
-            isDicom = true;
-            if (target === "patient") {
-              const meta = extractDicomMetadata(image);
-              if (!extractedMeta) {
-                extractedMeta = { ...meta };
-              } else {
-                if (!extractedMeta.patientName && meta.patientName) extractedMeta.patientName = meta.patientName;
-                if (!extractedMeta.studyDate && meta.studyDate) extractedMeta.studyDate = meta.studyDate;
-                if (!extractedMeta.age && meta.age) extractedMeta.age = meta.age;
-                if (!extractedMeta.birthDate && meta.birthDate) extractedMeta.birthDate = meta.birthDate;
-                if (!extractedMeta.sex && meta.sex) extractedMeta.sex = meta.sex;
-                if (!extractedMeta.detectedZone && meta.detectedZone) extractedMeta.detectedZone = meta.detectedZone;
-              }
-
-              if (meta.detectedZone) {
-                sliceZone = meta.detectedZone;
-                detectedZonesSet.add(sliceZone);
-              }
-
-              const desc = (meta.seriesDescription || "").toLowerCase();
-              if (desc.includes("t2") || desc.includes("t 2")) detectedSeq = "T2";
-              else if (desc.includes("t1") || desc.includes("t 1")) detectedSeq = "T1";
-              else if (desc.includes("stir")) detectedSeq = "STIR";
-              else if (desc.includes("pd")) {
-                if (desc.includes("fs") || desc.includes("fat")) detectedSeq = "PD Fat Sat";
-                else detectedSeq = "PD";
-              }
-
-              if (desc.includes("sag")) detectedPlane = "Sag";
-              else if (desc.includes("cor")) detectedPlane = "Cor";
-              else if (desc.includes("ax") || desc.includes("tra")) detectedPlane = "Ax";
-              else {
-                const oriTag = image.getTag(0x0020, 0x0037);
-                if (oriTag && oriTag.value && oriTag.value.length === 6) {
-                  const [rx, ry, rz, cx, cy, cz] = oriTag.value;
-                  const nx = Math.abs(ry * cz - rz * cy);
-                  const ny = Math.abs(rz * cx - rx * cz);
-                  const nz = Math.abs(rx * cy - ry * cx);
-                  const max = Math.max(nx, ny, nz);
-                  if (max === nx) detectedPlane = "Sag";
-                  else if (max === ny) detectedPlane = "Cor";
-                  else if (max === nz) detectedPlane = "Ax";
-                }
-              }
-            }
-
-            // Extract spatial sorting metadata
-            const inTag = image.getTag(0x0020, 0x0013); // Instance Number
-            if (inTag && inTag.value && inTag.value[0] !== undefined) {
-              const parsed = parseInt(inTag.value[0], 10);
-              if (!isNaN(parsed)) instanceNumber = parsed;
-            }
-
-            const slTag = image.getTag(0x0020, 0x1041); // Slice Location
-            if (slTag && slTag.value && slTag.value[0] !== undefined) {
-              const parsed = parseFloat(slTag.value[0]);
-              if (!isNaN(parsed)) sliceLocation = parsed;
-            }
-
-            const ippTag = image.getTag(0x0020, 0x0032); // Image Position (Patient)
-            if (ippTag && ippTag.value && ippTag.value.length >= 3) {
-              imagePositionPatient = [
-                parseFloat(ippTag.value[0]),
-                parseFloat(ippTag.value[1]),
-                parseFloat(ippTag.value[2])
-              ];
-            }
-
-            let imageOrientationPatient = null;
-            const iopTag = image.getTag(0x0020, 0x0037); // Image Orientation (Patient)
-            if (iopTag && iopTag.value && iopTag.value.length >= 6) {
-              imageOrientationPatient = [
-                parseFloat(iopTag.value[0]),
-                parseFloat(iopTag.value[1]),
-                parseFloat(iopTag.value[2]),
-                parseFloat(iopTag.value[3]),
-                parseFloat(iopTag.value[4]),
-                parseFloat(iopTag.value[5])
-              ];
-            }
-
-            const rawData = image.getInterpretedData();
-            const cols = image.getCols();
-            const rows = image.getRows();
-            if (rawData && cols > 0 && rows > 0) {
-              const c = document.createElement("canvas");
-              c.width = cols;
-              c.height = rows;
-              const ctx = c.getContext("2d");
-              const imgData = ctx.createImageData(c.width, c.height);
-              let min = Infinity, max = -Infinity;
-              for (let i = 0; i < rawData.length; i++) {
-                if (rawData[i] < min) min = rawData[i];
-                if (rawData[i] > max) max = rawData[i];
-              }
-              let psTag = image.getTag(0x0028, 0x0030);
-              if (psTag && psTag.value) {
-                if (Array.isArray(psTag.value) && psTag.value.length >= 2) ps = [parseFloat(psTag.value[0]), parseFloat(psTag.value[1])];
-                else if (typeof psTag.value[0] === 'string') {
-                  const parts = psTag.value[0].split('\\');
-                  if (parts.length >= 2) ps = [parseFloat(parts[0]), parseFloat(parts[1])];
-                }
-              }
-              let wc = image.getWindowCenter();
-              let ww = image.getWindowWidth();
-              if (Array.isArray(wc)) wc = wc[0];
-              if (Array.isArray(ww)) ww = ww[0];
-              
-              if (!wc || !ww) {
-                wc = (max + min) / 2;
-                ww = (max - min) || 1;
-              }
-              const minP = wc - ww / 2;
-              for (let i = 0; i < rawData.length; i++) {
-                let n = ((rawData[i] - minP) / ww) * 255;
-                if (n < 0) n = 0;
-                if (n > 255) n = 255;
-                const idx = i * 4;
-                imgData.data[idx] = n; imgData.data[idx + 1] = n; imgData.data[idx + 2] = n; imgData.data[idx + 3] = 255;
-              }
-              ctx.putImageData(imgData, 0, 0);
-              d = c.toDataURL("image/jpeg", 0.9);
-            }
-          }
-        } catch(e) {
-          console.warn("DICOM parse attempt failed for file:", f.name, e);
-        }
-      }
-      
-      // If not DICOM or Daikon couldn't render, only load standard images
-      if (!d && (isStandardWebImage || f.type.startsWith("image/"))) {
-        try {
-          d = await new Promise((res, rej) => {
-            const fr = new FileReader();
-            fr.onload = e => res(e.target.result);
-            fr.onerror = rej;
-            fr.readAsDataURL(f);
-          });
-        } catch (e) {
-          console.warn("Image read error:", f.name, e);
-        }
-      }
-
-      // If we don't have a valid image dataURL, skip this non-image file
-      if (!d || typeof d !== "string" || !d.startsWith("data:image/")) {
-        continue;
-      }
-
-      processedCount++;
-      const fin = (target === "patient" && anon) ? await anonymizeImage(d) : d;
-      const zoneFinal = sliceZone || extractedMeta?.detectedZone || baseStudy?.zone || "knee";
-      const obj = { 
-        id: Date.now() + Math.random(), 
-        name: f.name, 
-        data: fin, 
-        ts: Date.now(), 
-        ps, 
-        instanceNumber, 
-        sliceLocation, 
-        imagePositionPatient, 
-        imageOrientationPatient,
-        rows: image?.getRows ? image.getRows() : undefined,
-        cols: image?.getCols ? image.getCols() : undefined,
-        zone: zoneFinal 
-      };
-
-      if (target === "ref") {
-        setRefs(p => ({ ...p, [selZone]: [...(p[selZone] || []), obj] }));
-      } else {
-        const k = `${zoneFinal}__${detectedSeq}_${detectedPlane}`;
-        if (!accumulatedSeries[k]) accumulatedSeries[k] = [];
-        accumulatedSeries[k].push(obj);
-      }
-    }
-
-    // Sort series slices spatially by instanceNumber or sliceLocation
-    if (target === "patient") {
-      for (const k of Object.keys(accumulatedSeries)) {
-        accumulatedSeries[k].sort((a, b) => {
-          if (a.imagePositionPatient && b.imagePositionPatient) {
-            const dx = Math.abs(a.imagePositionPatient[0] - b.imagePositionPatient[0]);
-            const dy = Math.abs(a.imagePositionPatient[1] - b.imagePositionPatient[1]);
-            const dz = Math.abs(a.imagePositionPatient[2] - b.imagePositionPatient[2]);
-            if (dx >= dy && dx >= dz) return a.imagePositionPatient[0] - b.imagePositionPatient[0];
-            if (dy >= dx && dy >= dz) return a.imagePositionPatient[1] - b.imagePositionPatient[1];
-            return a.imagePositionPatient[2] - b.imagePositionPatient[2];
-          }
-          if (a.sliceLocation != null && b.sliceLocation != null) {
-            return a.sliceLocation - b.sliceLocation;
-          }
-          if (a.instanceNumber != null && b.instanceNumber != null) {
-            return a.instanceNumber - b.instanceNumber;
-          }
-          return (a.name || "").localeCompare(b.name || "", undefined, { numeric: true, sensitivity: "base" });
-        });
-      }
-    }
-
-    if (target === "patient") {
-      setStudy(p => {
-        const current = p || baseStudy || {};
-        const allZones = Array.from(detectedZonesSet).filter(Boolean);
-        const primaryZone = extractedMeta?.detectedZone || allZones[0] || current.zone || "knee";
-        
-        // Find best active series key that has images
-        let activeKey = current.activeSeriesKey;
-        if (!activeKey || !accumulatedSeries[activeKey] || accumulatedSeries[activeKey].length === 0) {
-          // Prefer a series from the primary zone first
-          const zoneKeys = Object.keys(accumulatedSeries).filter(k => k.startsWith(primaryZone + "__") && accumulatedSeries[k]?.length > 0);
-          if (zoneKeys.length > 0) {
-            activeKey = zoneKeys[0];
-          } else {
-            const anyKey = Object.keys(accumulatedSeries).find(k => accumulatedSeries[k] && accumulatedSeries[k].length > 0);
-            if (anyKey) activeKey = anyKey;
-          }
-        }
-
-        const parsedActive = parseSeriesKey(activeKey, primaryZone);
-        const now = new Date();
-        const defaultDate = `${String(now.getDate()).padStart(2, "0")}.${String(now.getMonth() + 1).padStart(2, "0")}.${now.getFullYear()}`;
-
-        return {
-          ...current,
-          patientName: (extractedMeta && extractedMeta.patientName) ? extractedMeta.patientName : (current.patientName || ""),
-          date: (extractedMeta && extractedMeta.studyDate) ? extractedMeta.studyDate : (current.date || defaultDate),
-          age: (extractedMeta && extractedMeta.age) ? extractedMeta.age : (current.age || ""),
-          birthDate: (extractedMeta && extractedMeta.birthDate) ? extractedMeta.birthDate : (current.birthDate || ""),
-          sex: (extractedMeta && extractedMeta.sex) ? extractedMeta.sex : (current.sex || ""),
-          zone: parsedActive.zone || primaryZone,
-          zones: allZones.length > 0 ? allZones : [primaryZone],
-          activeSeq: parsedActive.seq,
-          activePlane: parsedActive.plane,
-          activeSeriesKey: activeKey,
-          series: accumulatedSeries
-        };
+    try {
+      // Filter files: exclude known non-image files like DICOMDIR, desktop.ini, DS_Store
+      const list = Array.from(files).filter(f => {
+        const nm = f.name.toUpperCase();
+        if (nm === "DICOMDIR" || nm === "DESKTOP.INI" || nm === ".DS_STORE" || nm.endsWith(".TXT") || nm.endsWith(".PDF")) return false;
+        return true;
       });
 
-      if (processedCount > 0) {
-        flash(`Завантажено ${processedCount} зрізів (метадані оновлено)`);
-      } else {
-        flash("У вибраній папці не знайдено підтримуваних DICOM зрізів");
+      if (list.length === 0) return;
+      
+      let baseStudy = initialStudy || study;
+      let accumulatedSeries = { ...(baseStudy?.series || {}) };
+      let extractedMeta = null;
+      const detectedZonesSet = new Set();
+      if (baseStudy?.zones && Array.isArray(baseStudy.zones)) {
+        baseStudy.zones.forEach(z => detectedZonesSet.add(z));
+      } else if (baseStudy?.zone) {
+        detectedZonesSet.add(baseStudy.zone);
       }
+
+      let processedCount = 0;
+
+      for (const f of list) {
+        let d = null;
+        let detectedSeq = "T2";
+        let detectedPlane = "Sag";
+        let sliceZone = null;
+        let ps = null;
+        let instanceNumber = null;
+        let sliceLocation = null;
+        let imagePositionPatient = null;
+        let imageOrientationPatient = null;
+        let sliceRows = undefined;
+        let sliceCols = undefined;
+        let isDicom = false;
+
+        // Attempt DICOM parsing for all files unless explicitly standard web images
+        const isStandardWebImage = f.type.startsWith("image/png") || f.type.startsWith("image/jpeg") || f.type.startsWith("image/webp");
+
+        if (!isStandardWebImage) {
+          try {
+            const buf = await f.arrayBuffer();
+            const data = new DataView(buf);
+            const image = daikon.Series.parseImage(data);
+            if (image) {
+              isDicom = true;
+              sliceRows = image.getRows ? image.getRows() : undefined;
+              sliceCols = image.getCols ? image.getCols() : undefined;
+
+              if (target === "patient") {
+                const meta = extractDicomMetadata(image);
+                if (!extractedMeta) {
+                  extractedMeta = { ...meta };
+                } else {
+                  if (!extractedMeta.patientName && meta.patientName) extractedMeta.patientName = meta.patientName;
+                  if (!extractedMeta.studyDate && meta.studyDate) extractedMeta.studyDate = meta.studyDate;
+                  if (!extractedMeta.age && meta.age) extractedMeta.age = meta.age;
+                  if (!extractedMeta.birthDate && meta.birthDate) extractedMeta.birthDate = meta.birthDate;
+                  if (!extractedMeta.sex && meta.sex) extractedMeta.sex = meta.sex;
+                  if (!extractedMeta.detectedZone && meta.detectedZone) extractedMeta.detectedZone = meta.detectedZone;
+                }
+
+                if (meta.detectedZone) {
+                  sliceZone = meta.detectedZone;
+                  detectedZonesSet.add(sliceZone);
+                }
+
+                const desc = (meta.seriesDescription || "").toLowerCase();
+                if (desc.includes("t2") || desc.includes("t 2")) detectedSeq = "T2";
+                else if (desc.includes("t1") || desc.includes("t 1")) detectedSeq = "T1";
+                else if (desc.includes("stir")) detectedSeq = "STIR";
+                else if (desc.includes("pd")) {
+                  if (desc.includes("fs") || desc.includes("fat")) detectedSeq = "PD Fat Sat";
+                  else detectedSeq = "PD";
+                }
+
+                if (desc.includes("sag")) detectedPlane = "Sag";
+                else if (desc.includes("cor")) detectedPlane = "Cor";
+                else if (desc.includes("ax") || desc.includes("tra")) detectedPlane = "Ax";
+                else {
+                  const oriTag = image.getTag(0x0020, 0x0037);
+                  if (oriTag && oriTag.value && oriTag.value.length === 6) {
+                    const [rx, ry, rz, cx, cy, cz] = oriTag.value;
+                    const nx = Math.abs(ry * cz - rz * cy);
+                    const ny = Math.abs(rz * cx - rx * cz);
+                    const nz = Math.abs(rx * cy - ry * cx);
+                    const max = Math.max(nx, ny, nz);
+                    if (max === nx) detectedPlane = "Sag";
+                    else if (max === ny) detectedPlane = "Cor";
+                    else if (max === nz) detectedPlane = "Ax";
+                  }
+                }
+              }
+
+              // Extract spatial sorting metadata
+              const inTag = image.getTag(0x0020, 0x0013); // Instance Number
+              if (inTag && inTag.value && inTag.value[0] !== undefined) {
+                const parsed = parseInt(inTag.value[0], 10);
+                if (!isNaN(parsed)) instanceNumber = parsed;
+              }
+
+              const slTag = image.getTag(0x0020, 0x1041); // Slice Location
+              if (slTag && slTag.value && slTag.value[0] !== undefined) {
+                const parsed = parseFloat(slTag.value[0]);
+                if (!isNaN(parsed)) sliceLocation = parsed;
+              }
+
+              const ippTag = image.getTag(0x0020, 0x0032); // Image Position (Patient)
+              if (ippTag && ippTag.value && ippTag.value.length >= 3) {
+                imagePositionPatient = [
+                  parseFloat(ippTag.value[0]),
+                  parseFloat(ippTag.value[1]),
+                  parseFloat(ippTag.value[2])
+                ];
+              }
+
+              const iopTag = image.getTag(0x0020, 0x0037); // Image Orientation (Patient)
+              if (iopTag && iopTag.value && iopTag.value.length >= 6) {
+                imageOrientationPatient = [
+                  parseFloat(iopTag.value[0]),
+                  parseFloat(iopTag.value[1]),
+                  parseFloat(iopTag.value[2]),
+                  parseFloat(iopTag.value[3]),
+                  parseFloat(iopTag.value[4]),
+                  parseFloat(iopTag.value[5])
+                ];
+              }
+
+              const rawData = image.getInterpretedData();
+              const cols = image.getCols();
+              const rows = image.getRows();
+              if (rawData && cols > 0 && rows > 0) {
+                const c = document.createElement("canvas");
+                c.width = cols;
+                c.height = rows;
+                const ctx = c.getContext("2d");
+                const imgData = ctx.createImageData(c.width, c.height);
+                let min = Infinity, max = -Infinity;
+                for (let i = 0; i < rawData.length; i++) {
+                  if (rawData[i] < min) min = rawData[i];
+                  if (rawData[i] > max) max = rawData[i];
+                }
+                let psTag = image.getTag(0x0028, 0x0030);
+                if (psTag && psTag.value) {
+                  if (Array.isArray(psTag.value) && psTag.value.length >= 2) ps = [parseFloat(psTag.value[0]), parseFloat(psTag.value[1])];
+                  else if (typeof psTag.value[0] === 'string') {
+                    const parts = psTag.value[0].split('\\');
+                    if (parts.length >= 2) ps = [parseFloat(parts[0]), parseFloat(parts[1])];
+                  }
+                }
+                let wc = image.getWindowCenter();
+                let ww = image.getWindowWidth();
+                if (Array.isArray(wc)) wc = wc[0];
+                if (Array.isArray(ww)) ww = ww[0];
+                
+                if (!wc || !ww) {
+                  wc = (max + min) / 2;
+                  ww = (max - min) || 1;
+                }
+                const minP = wc - ww / 2;
+                for (let i = 0; i < rawData.length; i++) {
+                  let n = ((rawData[i] - minP) / ww) * 255;
+                  if (n < 0) n = 0;
+                  if (n > 255) n = 255;
+                  const idx = i * 4;
+                  imgData.data[idx] = n; imgData.data[idx + 1] = n; imgData.data[idx + 2] = n; imgData.data[idx + 3] = 255;
+                }
+                ctx.putImageData(imgData, 0, 0);
+                d = c.toDataURL("image/jpeg", 0.9);
+              }
+            }
+          } catch(e) {
+            console.warn("DICOM parse attempt failed for file:", f.name, e);
+          }
+        }
+        
+        // If not DICOM or Daikon couldn't render, only load standard images
+        if (!d && (isStandardWebImage || f.type.startsWith("image/"))) {
+          try {
+            d = await new Promise((res, rej) => {
+              const fr = new FileReader();
+              fr.onload = e => res(e.target.result);
+              fr.onerror = rej;
+              fr.readAsDataURL(f);
+            });
+          } catch (e) {
+            console.warn("Image read error:", f.name, e);
+          }
+        }
+
+        // If we don't have a valid image dataURL, skip this non-image file
+        if (!d || typeof d !== "string" || !d.startsWith("data:image/")) {
+          continue;
+        }
+
+        processedCount++;
+        const fin = (target === "patient" && anon) ? await anonymizeImage(d) : d;
+        const zoneFinal = sliceZone || extractedMeta?.detectedZone || baseStudy?.zone || "knee";
+        const obj = { 
+          id: Date.now() + Math.random(), 
+          name: f.name, 
+          data: fin, 
+          ts: Date.now(), 
+          ps, 
+          instanceNumber, 
+          sliceLocation, 
+          imagePositionPatient, 
+          imageOrientationPatient,
+          rows: sliceRows,
+          cols: sliceCols,
+          zone: zoneFinal 
+        };
+
+        if (target === "ref") {
+          setRefs(p => ({ ...p, [selZone]: [...(p[selZone] || []), obj] }));
+        } else {
+          const k = `${zoneFinal}__${detectedSeq}_${detectedPlane}`;
+          if (!accumulatedSeries[k]) accumulatedSeries[k] = [];
+          accumulatedSeries[k].push(obj);
+        }
+      }
+
+      // Sort series slices spatially by instanceNumber or sliceLocation
+      if (target === "patient") {
+        for (const k of Object.keys(accumulatedSeries)) {
+          accumulatedSeries[k].sort((a, b) => {
+            if (a.imagePositionPatient && b.imagePositionPatient) {
+              const dx = Math.abs(a.imagePositionPatient[0] - b.imagePositionPatient[0]);
+              const dy = Math.abs(a.imagePositionPatient[1] - b.imagePositionPatient[1]);
+              const dz = Math.abs(a.imagePositionPatient[2] - b.imagePositionPatient[2]);
+              if (dx >= dy && dx >= dz) return a.imagePositionPatient[0] - b.imagePositionPatient[0];
+              if (dy >= dx && dy >= dz) return a.imagePositionPatient[1] - b.imagePositionPatient[1];
+              return a.imagePositionPatient[2] - b.imagePositionPatient[2];
+            }
+            if (a.sliceLocation != null && b.sliceLocation != null) {
+              return a.sliceLocation - b.sliceLocation;
+            }
+            if (a.instanceNumber != null && b.instanceNumber != null) {
+              return a.instanceNumber - b.instanceNumber;
+            }
+            return (a.name || "").localeCompare(b.name || "", undefined, { numeric: true, sensitivity: "base" });
+          });
+        }
+      }
+
+      if (target === "patient") {
+        setStudy(p => {
+          const current = p || baseStudy || {};
+          const allZones = Array.from(detectedZonesSet).filter(Boolean);
+          const primaryZone = extractedMeta?.detectedZone || allZones[0] || current.zone || "knee";
+          
+          // Find best active series key that has images
+          let activeKey = current.activeSeriesKey;
+          if (!activeKey || !accumulatedSeries[activeKey] || accumulatedSeries[activeKey].length === 0) {
+            // Prefer a series from the primary zone first
+            const zoneKeys = Object.keys(accumulatedSeries).filter(k => k.startsWith(primaryZone + "__") && accumulatedSeries[k]?.length > 0);
+            if (zoneKeys.length > 0) {
+              activeKey = zoneKeys[0];
+            } else {
+              const anyKey = Object.keys(accumulatedSeries).find(k => accumulatedSeries[k] && accumulatedSeries[k].length > 0);
+              if (anyKey) activeKey = anyKey;
+            }
+          }
+
+          const parsedActive = parseSeriesKey(activeKey, primaryZone);
+          const now = new Date();
+          const defaultDate = `${String(now.getDate()).padStart(2, "0")}.${String(now.getMonth() + 1).padStart(2, "0")}.${now.getFullYear()}`;
+
+          return {
+            ...current,
+            patientName: (extractedMeta && extractedMeta.patientName) ? extractedMeta.patientName : (current.patientName || ""),
+            date: (extractedMeta && extractedMeta.studyDate) ? extractedMeta.studyDate : (current.date || defaultDate),
+            age: (extractedMeta && extractedMeta.age) ? extractedMeta.age : (current.age || ""),
+            birthDate: (extractedMeta && extractedMeta.birthDate) ? extractedMeta.birthDate : (current.birthDate || ""),
+            sex: (extractedMeta && extractedMeta.sex) ? extractedMeta.sex : (current.sex || ""),
+            zone: parsedActive.zone || primaryZone,
+            zones: allZones.length > 0 ? allZones : [primaryZone],
+            activeSeq: parsedActive.seq,
+            activePlane: parsedActive.plane,
+            activeSeriesKey: activeKey,
+            series: accumulatedSeries
+          };
+        });
+
+        if (processedCount > 0) {
+          flash(`Завантажено ${processedCount} зрізів (метадані оновлено)`);
+        } else {
+          flash("У вибраній папці не знайдено підтримуваних DICOM зрізів");
+        }
+      }
+    } catch (err) {
+      console.error("Upload failed with error:", err);
+      flash("Помилка обробки файлів: " + (err.message || "невідома помилка"));
     }
   };
 

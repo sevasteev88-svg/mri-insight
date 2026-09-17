@@ -233,7 +233,12 @@ export default function NewStudy() {
             directory="" 
             multiple 
             style={{ display: "none" }} 
-            onChange={e => uploadImgs(e.target.files, "patient")} 
+            onChange={e => {
+              if (e.target.files && e.target.files.length > 0) {
+                uploadImgs(e.target.files, "patient");
+              }
+              e.target.value = "";
+            }} 
           />
         </div>
 
@@ -253,7 +258,12 @@ export default function NewStudy() {
             multiple 
             accept="*/*" 
             style={{ display: "none" }} 
-            onChange={e => uploadImgs(e.target.files, "patient")} 
+            onChange={e => {
+              if (e.target.files && e.target.files.length > 0) {
+                uploadImgs(e.target.files, "patient");
+              }
+              e.target.value = "";
+            }} 
           />
         </div>
       </div>
