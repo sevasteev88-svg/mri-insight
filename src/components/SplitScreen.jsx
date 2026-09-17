@@ -161,12 +161,12 @@ export default function SplitScreen() {
 
     // Line to draw on Right viewer showing position of active Left slice
     const localizerOnRight = (showLocalizer && rightMode === "compare" && leftSlice && rightSlice) 
-      ? calculateLocalizerLine(rightSlice, leftSlice, rightPlane, leftPlane, splitIdx, im.length)
+      ? calculateLocalizerLine(rightSlice, leftSlice, rightPlane, leftPlane, splitIdx, im.length, compImgs, im)
       : null;
 
     // Line to draw on Left viewer showing position of active Right slice
     const localizerOnLeft = (showLocalizer && rightMode === "compare" && leftSlice && rightSlice)
-      ? calculateLocalizerLine(leftSlice, rightSlice, leftPlane, rightPlane, compareIdx, compImgs.length)
+      ? calculateLocalizerLine(leftSlice, rightSlice, leftPlane, rightPlane, compareIdx, compImgs.length, im, compImgs)
       : null;
 
     const navRef = (dir) => setRefIdx(p => Math.max(0, Math.min(refImgs.length - 1, p + dir)));

@@ -42,9 +42,20 @@ function normalize(a) {
  * @param {string} sourcePlane - Optional plane of source ("Sagittal", "Coronal", "Axial")
  * @param {number} sourceIdx - Slice index (0-based)
  * @param {number} sourceTotal - Total slices in source series
+ * @param {Array} targetSeries - Full array of slices in target series (for physical bounds)
+ * @param {Array} sourceSeries - Full array of slices in source series (for physical bounds)
  * @returns {Object|null} { x1, y1, x2, y2 } normalized [0, 1] relative to image dimensions, or null
  */
-export function calculateLocalizerLine(targetSlice, sourceSlice, targetPlane, sourcePlane, sourceIdx = 0, sourceTotal = 1) {
+export function calculateLocalizerLine(
+  targetSlice, 
+  sourceSlice, 
+  targetPlane, 
+  sourcePlane, 
+  sourceIdx = 0, 
+  sourceTotal = 1,
+  targetSeries = null,
+  sourceSeries = null
+) {
   if (!targetSlice || !sourceSlice) return null;
 
   // 1. Try true 3D DICOM plane intersection if metadata is available
@@ -138,7 +149,7 @@ export function calculateLocalizerLine(targetSlice, sourceSlice, targetPlane, so
     }
   }
 
-  // 2. Fallback heuristic for Orthogonal Planes (when IOP is absent or from web/non-standard DICOM)
+  // 2. Physical coordinate interpolation using IPP or sliceLocation
   const tP = (targetPlane || "").toLowerCase();
   const sP = (sourcePlane || "").toLowerCase();
 
@@ -155,16 +166,56 @@ export function calculateLocalizerLine(targetSlice, sourceSlice, targetPlane, so
     return null;
   }
 
-  // Compute normalized slice progress 0..1
+  // Helper to extract physical position: IPP or sliceLocation
+  const getSlicePos = (s) => {
+    if (!s) return null;
+    if (s.sliceLocation != null && !isNaN(s.sliceLocation)) return s.sliceLocation;
+    if (s.imagePositionPatient && s.imagePositionPatient.length >= 3) {
+      // Axial -> Z (index 2); Coronal -> Y (index 1); Sagittal -> X (index 0)
+      if (isSourceTra || isTargetTra) return s.imagePositionPatient[2];
+      if (isSourceCor || isTargetCor) return s.imagePositionPatient[1];
+      if (isSourceSag || isTargetSag) return s.imagePositionPatient[0];
+    }
+    return null;
+  };
+
+  // Compute normalized position
   let progress = sourceTotal > 1 ? sourceIdx / (sourceTotal - 1) : 0.5;
 
+  // Try physical range matching if target or source series have physical coordinates
+  const srcPos = getSlicePos(sourceSlice);
+  if (srcPos != null && targetSlice && targetSlice.imagePositionPatient) {
+    const tIPP = targetSlice.imagePositionPatient;
+    const tPs = targetSlice.ps || [0.4, 0.4];
+    const tRows = targetSlice.rows || 512;
+    const tCols = targetSlice.cols || 512;
+
+    // For Axial source on Sagittal / Coronal target:
+    // The line is horizontal at height corresponding to srcPos (Z) relative to target FOV
+    if (isSourceTra && (isTargetSag || isTargetCor)) {
+      // Target Z range: top pixel to bottom pixel
+      // In DICOM patient coordinates, top is usually tIPP[2], bottom is tIPP[2] - tRows * tPs[0] (or vice versa)
+      const topZ = tIPP[2];
+      const botZ = topZ - (tRows * tPs[0]);
+      const minZ = Math.min(topZ, botZ);
+      const maxZ = Math.max(topZ, botZ);
+      if (maxZ > minZ) {
+        // Since Y axis on screen goes 0 (top) -> 1 (bottom), and DICOM Z goes superior (+) -> inferior (-)
+        const yFrac = (topZ - srcPos) / (topZ - botZ);
+        if (yFrac >= -0.05 && yFrac <= 1.05) {
+          const y = Math.max(0, Math.min(1, yFrac));
+          return { x1: 0, y1: y, x2: 1, y2: y };
+        }
+      }
+    }
+  }
+
+  // Fallback to proportional calculation
   // If target is Sagittal and source is Coronal (or vice versa):
-  // Coronal on Sagittal view: vertical line moving from anterior to posterior (X or Y)
   if (isTargetSag && isSourceCor) {
     const x = Math.max(0.05, Math.min(0.95, progress));
     return { x1: x, y1: 0, x2: x, y2: 1 };
   }
-  // Sagittal on Coronal view: vertical line moving from lateral to medial (X)
   if (isTargetCor && isSourceSag) {
     const x = Math.max(0.05, Math.min(0.95, progress));
     return { x1: x, y1: 0, x2: x, y2: 1 };
