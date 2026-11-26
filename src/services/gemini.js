@@ -94,8 +94,34 @@ function parseJsonSafe(raw) {
   return JSON.parse(clean);
 }
 
+const FALLBACK_CHAIN = {
+  "gemini-4-hydrogen": ["gemini-4-argon", "gemini-3.5-flash-lite"],
+  "gemini-4-neon": ["gemini-4-argon", "gemini-4-hydrogen"],
+  "gemini-4-argon": ["gemini-4-hydrogen", "gemini-3.5-flash-lite"],
+  "gemini-3.5-flash-lite": ["gemini-4-hydrogen"]
+};
+
+function isTransientOverloadError(err) {
+  const msg = String(err?.message || err || "").toLowerCase();
+  const status = err?.status || err?.code;
+  return (
+    status === 503 ||
+    status === 429 ||
+    msg.includes("503") ||
+    msg.includes("429") ||
+    msg.includes("high demand") ||
+    msg.includes("overloaded") ||
+    msg.includes("unavailable") ||
+    msg.includes("resource_exhausted")
+  );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
- * Core Gemini Interactions API wrapper.
+ * Core Gemini Interactions API wrapper with automatic 503/429 backoff retry & model failover.
  * Never passes deprecated parameters (temperature, top_p, top_k) or "minimal" thinking_level on Gemini 4.
  */
 export async function runInteraction({
@@ -109,12 +135,7 @@ export async function runInteraction({
 }) {
   if (!apiKey) throw new Error("API ключ Gemini не вказано");
   const client = new GoogleGenAI({ apiKey });
-  const targetModel = model === TRIAGE_MODEL ? TRIAGE_MODEL : normalizeModelId(model);
-
-  const safeThinking =
-    thinkingLevel === "minimal" && targetModel.startsWith("gemini-4")
-      ? "low"
-      : thinkingLevel;
+  const primaryModel = model === TRIAGE_MODEL ? TRIAGE_MODEL : normalizeModelId(model);
 
   // Gemini Interactions v1 expects array inputs to be Step objects (e.g. type: "user_input" with content array)
   const normalizedInput =
@@ -122,33 +143,63 @@ export async function runInteraction({
       ? [{ type: "user_input", content: input }]
       : input;
 
-  const params = {
-    model: targetModel,
-    input: normalizedInput,
-    generation_config: {
-      thinking_level: safeThinking || "medium"
-    }
-  };
+  // Only fail over to another model on stateless requests (previousInteractionId is model/chain specific)
+  const candidateModels = previousInteractionId
+    ? [primaryModel]
+    : [primaryModel, ...(FALLBACK_CHAIN[primaryModel] || [])];
 
-  if (systemInstruction) {
-    params.system_instruction = systemInstruction;
-  }
-  if (previousInteractionId) {
-    params.previous_interaction_id = previousInteractionId;
-  }
-  if (responseSchema) {
-    params.response_format = {
-      type: "text",
-      mime_type: "application/json",
-      schema: responseSchema
+  let lastError = null;
+
+  for (let mIdx = 0; mIdx < candidateModels.length; mIdx++) {
+    const candidateModel = candidateModels[mIdx];
+    const safeThinking =
+      thinkingLevel === "minimal" && candidateModel.startsWith("gemini-4")
+        ? "low"
+        : thinkingLevel;
+
+    const params = {
+      model: candidateModel,
+      input: normalizedInput,
+      generation_config: {
+        thinking_level: safeThinking || "medium"
+      }
     };
+
+    if (systemInstruction) params.system_instruction = systemInstruction;
+    if (previousInteractionId) params.previous_interaction_id = previousInteractionId;
+    if (responseSchema) {
+      params.response_format = {
+        type: "text",
+        mime_type: "application/json",
+        schema: responseSchema
+      };
+    }
+
+    const maxAttempts = mIdx === 0 ? 3 : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const interaction = await client.interactions.create(params);
+        return {
+          text: extractOutputText(interaction),
+          id: interaction.id || null
+        };
+      } catch (err) {
+        lastError = err;
+        if (!isTransientOverloadError(err)) {
+          throw err;
+        }
+        if (attempt < maxAttempts) {
+          const delayMs = 1500 * attempt;
+          console.warn(`Gemini ${candidateModel} transient overload (attempt ${attempt}/${maxAttempts}), retrying in ${delayMs}ms...`);
+          await sleep(delayMs);
+        } else {
+          console.warn(`Gemini ${candidateModel} overloaded, trying fallback model if available...`);
+        }
+      }
+    }
   }
 
-  const interaction = await client.interactions.create(params);
-  return {
-    text: extractOutputText(interaction),
-    id: interaction.id || null
-  };
+  throw lastError || new Error("Помилка звернення до Gemini API");
 }
 
 // ═══════════ JSON SCHEMAS ═══════════
