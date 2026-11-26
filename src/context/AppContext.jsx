@@ -1,12 +1,13 @@
 import React, { createContext, useState, useRef, useEffect, useCallback } from "react";
-import daikon from "daikon";
 import { supabase } from "../services/supabase.js";
 import { openDB, dbGet, dbPut, dbGetAll } from "../services/db.js";
+import { parseDicomFileInWorker } from "../services/dicomLoader.js";
 import { ZONES, parseSeriesKey, formatSeriesLabel } from "../constants/anatomy.js";
-import { getSysPromptAnalyze, getPromptRoi, getPromptManual } from "../constants/prompts.js";
+import { SYS_PROMPT, getSysPromptAnalyze, getPromptRoi, getPromptManual } from "../constants/prompts.js";
 import { anonymizeImage, collectZoneMaterials, confColor, compressImage } from "../utils/helpers.js";
-import { extractDicomMetadata } from "../utils/dicomMeta.js";
 import { STRUCTURED_KB, INITIAL_KB } from "../constants/anatomy_kb.js";
+
+const isUuid = (id) => typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
 export const AppContext = createContext();
 
@@ -19,6 +20,7 @@ export function AppProvider({ children }) {
   const [archiveStatus, setArchiveStatus] = useState("none"); // none, prompt, ready
   const [archivePatients, setArchivePatients] = useState([]);
   const [archiveLoading, setArchiveLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
   const [apiKeyIn, setApiKeyIn] = useState("");
   const [aiModel, setAiModel] = useState("gemini-2.5-flash");
   const [refs, setRefs] = useState({});
@@ -192,6 +194,21 @@ export function AppProvider({ children }) {
         setKb(mergedKb);
       } catch {}
 
+      // Restore persisted local PACS archive directory handle
+      try {
+        const savedHandle = await dbGet("archive", "root_handle");
+        if (savedHandle) {
+          setArchiveHandle(savedHandle);
+          const perm = savedHandle.queryPermission ? await savedHandle.queryPermission({ mode: "read" }) : "prompt";
+          if (perm === "granted") {
+            setArchiveStatus("ready");
+            loadArchive(savedHandle);
+          } else {
+            setArchiveStatus("prompt");
+          }
+        }
+      } catch {}
+
       // Fetch fresh studies from Cloud Supabase
       await fetchCloudStudies();
     })();
@@ -242,6 +259,7 @@ export function AppProvider({ children }) {
       });
 
       if (list.length === 0) return;
+      setUploadProgress({ done: 0, total: list.length });
       
       let baseStudy = initialStudy || study;
       let accumulatedSeries = { ...(baseStudy?.series || {}) };
@@ -254,8 +272,11 @@ export function AppProvider({ children }) {
       }
 
       let processedCount = 0;
+      let fileIdx = 0;
 
       for (const f of list) {
+        fileIdx++;
+        setUploadProgress({ done: fileIdx, total: list.length });
         let d = null;
         let detectedSeq = "T2";
         let detectedPlane = "Sag";
@@ -267,23 +288,25 @@ export function AppProvider({ children }) {
         let imageOrientationPatient = null;
         let sliceRows = undefined;
         let sliceCols = undefined;
-        let isDicom = false;
 
-        // Attempt DICOM parsing for all files unless explicitly standard web images
+        // Attempt DICOM parsing in Web Worker for all files unless explicitly standard web images
         const isStandardWebImage = f.type.startsWith("image/png") || f.type.startsWith("image/jpeg") || f.type.startsWith("image/webp");
 
         if (!isStandardWebImage) {
           try {
-            const buf = await f.arrayBuffer();
-            const data = new DataView(buf);
-            const image = daikon.Series.parseImage(data);
-            if (image) {
-              isDicom = true;
-              sliceRows = image.getRows ? image.getRows() : undefined;
-              sliceCols = image.getCols ? image.getCols() : undefined;
+            const parsed = await parseDicomFileInWorker(f, target === "patient");
+            if (parsed?.ok) {
+              sliceRows = parsed.rows;
+              sliceCols = parsed.cols;
+              ps = parsed.ps;
+              instanceNumber = parsed.instanceNumber;
+              sliceLocation = parsed.sliceLocation;
+              imagePositionPatient = parsed.imagePositionPatient;
+              imageOrientationPatient = parsed.imageOrientationPatient;
+              d = parsed.dataUrl;
 
-              if (target === "patient") {
-                const meta = extractDicomMetadata(image);
+              if (target === "patient" && parsed.meta) {
+                const meta = parsed.meta;
                 if (!extractedMeta) {
                   extractedMeta = { ...meta };
                 } else {
@@ -300,111 +323,11 @@ export function AppProvider({ children }) {
                   detectedZonesSet.add(sliceZone);
                 }
 
-                const desc = (meta.seriesDescription || "").toLowerCase();
-                if (desc.includes("t2") || desc.includes("t 2")) detectedSeq = "T2";
-                else if (desc.includes("t1") || desc.includes("t 1")) detectedSeq = "T1";
-                else if (desc.includes("stir")) detectedSeq = "STIR";
-                else if (desc.includes("pd")) {
-                  if (desc.includes("fs") || desc.includes("fat")) detectedSeq = "PD Fat Sat";
-                  else detectedSeq = "PD";
-                }
-
-                if (desc.includes("sag")) detectedPlane = "Sag";
-                else if (desc.includes("cor")) detectedPlane = "Cor";
-                else if (desc.includes("ax") || desc.includes("tra")) detectedPlane = "Ax";
-                else {
-                  const oriTag = image.getTag(0x0020, 0x0037);
-                  if (oriTag && oriTag.value && oriTag.value.length === 6) {
-                    const [rx, ry, rz, cx, cy, cz] = oriTag.value;
-                    const nx = Math.abs(ry * cz - rz * cy);
-                    const ny = Math.abs(rz * cx - rx * cz);
-                    const nz = Math.abs(rx * cy - ry * cx);
-                    const max = Math.max(nx, ny, nz);
-                    if (max === nx) detectedPlane = "Sag";
-                    else if (max === ny) detectedPlane = "Cor";
-                    else if (max === nz) detectedPlane = "Ax";
-                  }
-                }
-              }
-
-              // Extract spatial sorting metadata
-              const inTag = image.getTag(0x0020, 0x0013); // Instance Number
-              if (inTag && inTag.value && inTag.value[0] !== undefined) {
-                const parsed = parseInt(inTag.value[0], 10);
-                if (!isNaN(parsed)) instanceNumber = parsed;
-              }
-
-              const slTag = image.getTag(0x0020, 0x1041); // Slice Location
-              if (slTag && slTag.value && slTag.value[0] !== undefined) {
-                const parsed = parseFloat(slTag.value[0]);
-                if (!isNaN(parsed)) sliceLocation = parsed;
-              }
-
-              const ippTag = image.getTag(0x0020, 0x0032); // Image Position (Patient)
-              if (ippTag && ippTag.value && ippTag.value.length >= 3) {
-                imagePositionPatient = [
-                  parseFloat(ippTag.value[0]),
-                  parseFloat(ippTag.value[1]),
-                  parseFloat(ippTag.value[2])
-                ];
-              }
-
-              const iopTag = image.getTag(0x0020, 0x0037); // Image Orientation (Patient)
-              if (iopTag && iopTag.value && iopTag.value.length >= 6) {
-                imageOrientationPatient = [
-                  parseFloat(iopTag.value[0]),
-                  parseFloat(iopTag.value[1]),
-                  parseFloat(iopTag.value[2]),
-                  parseFloat(iopTag.value[3]),
-                  parseFloat(iopTag.value[4]),
-                  parseFloat(iopTag.value[5])
-                ];
-              }
-
-              const rawData = image.getInterpretedData();
-              const cols = image.getCols();
-              const rows = image.getRows();
-              if (rawData && cols > 0 && rows > 0) {
-                const c = document.createElement("canvas");
-                c.width = cols;
-                c.height = rows;
-                const ctx = c.getContext("2d");
-                const imgData = ctx.createImageData(c.width, c.height);
-                let min = Infinity, max = -Infinity;
-                for (let i = 0; i < rawData.length; i++) {
-                  if (rawData[i] < min) min = rawData[i];
-                  if (rawData[i] > max) max = rawData[i];
-                }
-                let psTag = image.getTag(0x0028, 0x0030);
-                if (psTag && psTag.value) {
-                  if (Array.isArray(psTag.value) && psTag.value.length >= 2) ps = [parseFloat(psTag.value[0]), parseFloat(psTag.value[1])];
-                  else if (typeof psTag.value[0] === 'string') {
-                    const parts = psTag.value[0].split('\\');
-                    if (parts.length >= 2) ps = [parseFloat(parts[0]), parseFloat(parts[1])];
-                  }
-                }
-                let wc = image.getWindowCenter();
-                let ww = image.getWindowWidth();
-                if (Array.isArray(wc)) wc = wc[0];
-                if (Array.isArray(ww)) ww = ww[0];
-                
-                if (!wc || !ww) {
-                  wc = (max + min) / 2;
-                  ww = (max - min) || 1;
-                }
-                const minP = wc - ww / 2;
-                for (let i = 0; i < rawData.length; i++) {
-                  let n = ((rawData[i] - minP) / ww) * 255;
-                  if (n < 0) n = 0;
-                  if (n > 255) n = 255;
-                  const idx = i * 4;
-                  imgData.data[idx] = n; imgData.data[idx + 1] = n; imgData.data[idx + 2] = n; imgData.data[idx + 3] = 255;
-                }
-                ctx.putImageData(imgData, 0, 0);
-                d = c.toDataURL("image/jpeg", 0.9);
+                detectedSeq = parsed.detectedSeq || detectedSeq;
+                detectedPlane = parsed.detectedPlane || detectedPlane;
               }
             }
-          } catch(e) {
+          } catch (e) {
             console.warn("DICOM parse attempt failed for file:", f.name, e);
           }
         }
@@ -526,6 +449,8 @@ export function AppProvider({ children }) {
     } catch (err) {
       console.error("Upload failed with error:", err);
       flash("Помилка обробки файлів: " + (err.message || "невідома помилка"));
+    } finally {
+      setUploadProgress(null);
     }
   };
 
@@ -652,22 +577,40 @@ export function AppProvider({ children }) {
   };
 
   const archiveStudy = async (id) => {
-    const upd = studies.map(s => s.id === id ? { ...s, archived: true } : s);
+    const upd = studies.map(s => String(s.id) === String(id) ? { ...s, archived: true } : s);
     setStudies(upd);
     try { localStorage.setItem("mri-hist", JSON.stringify(upd)); } catch {}
+    try {
+      const saved = await dbGet("studies", String(id));
+      if (saved) await dbPut("studies", String(id), { ...saved, archived: true });
+    } catch {}
+    if (isUuid(id)) {
+      try {
+        await supabase.from("studies").update({ archived: true, updated_at: new Date().toISOString() }).eq("id", id);
+      } catch (e) { console.warn("Supabase archive error:", e); }
+    }
     flash("Дослідження відправлено в архів");
-    if (study?.id === id) setScr("dash");
+    if (String(study?.id) === String(id)) setScr("dash");
   };
 
   const unarchiveStudy = async (id) => {
-    const upd = studies.map(s => s.id === id ? { ...s, archived: false } : s);
+    const upd = studies.map(s => String(s.id) === String(id) ? { ...s, archived: false } : s);
     setStudies(upd);
     try { localStorage.setItem("mri-hist", JSON.stringify(upd)); } catch {}
+    try {
+      const saved = await dbGet("studies", String(id));
+      if (saved) await dbPut("studies", String(id), { ...saved, archived: false });
+    } catch {}
+    if (isUuid(id)) {
+      try {
+        await supabase.from("studies").update({ archived: false, updated_at: new Date().toISOString() }).eq("id", id);
+      } catch (e) { console.warn("Supabase unarchive error:", e); }
+    }
     flash("Дослідження відновлено з архіву");
   };
 
   const deleteStudy = async (id) => {
-    const upd = studies.filter(s => s.id !== id);
+    const upd = studies.filter(s => String(s.id) !== String(id));
     setStudies(upd);
     try { localStorage.setItem("mri-hist", JSON.stringify(upd)); } catch {}
     try {
@@ -675,8 +618,13 @@ export function AppProvider({ children }) {
       const tx = db.transaction("studies", "readwrite");
       tx.objectStore("studies").delete(String(id));
     } catch {}
+    if (isUuid(id)) {
+      try {
+        await supabase.from("studies").delete().eq("id", id);
+      } catch (e) { console.warn("Supabase delete error:", e); }
+    }
     flash("Дослідження видалено");
-    if (study?.id === id) setScr("dash");
+    if (String(study?.id) === String(id)) setScr("dash");
   };
 
   const [ocrLoading, setOcrLoading] = useState(false);
@@ -1290,21 +1238,23 @@ export function AppProvider({ children }) {
 
       const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const clean = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      let updatedStudy;
       try {
         const j = JSON.parse(clean);
-        setStudy(p => ({ ...p, findings: j.findings || [], summary: j.summary, recommendation: j.recommendation, radio: j.radiopaedia_terms || [], status: "done" }));
+        updatedStudy = { ...study, findings: j.findings || [], summary: j.summary, recommendation: j.recommendation, radio: j.radiopaedia_terms || [], status: "done" };
       } catch {
-        setStudy(p => ({ ...p, findings: [{ id: 1, structure: "Аналіз", description: clean, slices: "-", confidence_level: 50, severity: "mild" }], status: "done" }));
+        updatedStudy = { ...study, findings: [{ id: 1, structure: "Аналіз", description: clean, slices: "-", confidence_level: 50, severity: "mild" }], status: "done" };
       }
+      setStudy(updatedStudy);
 
       setProg(null); setScr("results");
       // Save full study to IndexedDB
       try {
-        await dbPut("studies", String(study.id), { ...study, findings: study.findings, summary: study.summary, recommendation: study.recommendation, radio: study.radio });
+        await dbPut("studies", String(updatedStudy.id), updatedStudy);
       } catch {}
-      const fc = (study.findings || []).length;
-      const meta = { id: study.id, pn: study.patientName, z: study.zone, d: study.date, ic: all.length, fc };
-      const upd = [meta, ...studies.slice(0, 24)];
+      const fc = (updatedStudy.findings || []).length;
+      const meta = { id: updatedStudy.id, pn: updatedStudy.patientName, z: updatedStudy.zone, d: updatedStudy.date, mriDate: updatedStudy.mriDate || updatedStudy.date, ic: all.length, fc, archived: updatedStudy.archived || false };
+      const upd = [meta, ...studies.filter(x => String(x.id) !== String(updatedStudy.id)).slice(0, 24)];
       setStudies(upd);
       try { localStorage.setItem("mri-hist", JSON.stringify(upd)); } catch {}
     } catch (err) {
@@ -1440,61 +1390,7 @@ export function AppProvider({ children }) {
     }
   };
 
-  // ═══════════ SCREENS ═══════════
-
-  // Tabler icon helper
-  const TI = ({ name, size = 14, color }) => <i className={`ti ${name}`} style={{ fontSize: size, color, lineHeight: 1 }} aria-hidden="true" />;
-
-  // Reusable grouped zone selector with collapsible submenus for muscles/ligaments
-  // renderZone(zoneKey, zoneObj) => JSX for a single zone button
-  const ZoneGroups = ({ renderZone, countFn }) => (
-    <>
-      {Object.entries(ZONE_GROUPS).map(([gk, gv]) => {
-        const zonesInGroup = Object.entries(ZONES).filter(([_, z]) => z.group === gk);
-        const hasSubs = zonesInGroup.some(([_, z]) => z.sub);
-
-        if (!hasSubs) {
-          return (
-            <div key={gk} style={{ marginBottom: 10 }}>
-              <p style={P.grpLabel}><TI name={gv.icon} size={13} color="#8b919c" /> {gv.label}</p>
-              <div style={P.ztRow}>{zonesInGroup.map(([k, v]) => renderZone(k, v))}</div>
-            </div>
-          );
-        }
-
-        // Group with subdivisions — render collapsible submenus
-        const subsMap = {};
-        zonesInGroup.forEach(([k, v]) => { (subsMap[v.sub] = subsMap[v.sub] || []).push([k, v]); });
-        return (
-          <div key={gk} style={{ marginBottom: 10 }}>
-            <p style={P.grpLabel}><TI name={gv.icon} size={13} color="#8b919c" /> {gv.label}</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {Object.entries(subsMap).map(([subKey, subZones]) => {
-                const open = expandedSubs[subKey];
-                const subCount = countFn ? subZones.reduce((s, [k]) => s + countFn(k), 0) : 0;
-                return (
-                  <div key={subKey} style={{ background: "#0f1217", border: "0.5px solid rgba(255,255,255,.05)", borderRadius: 6, overflow: "hidden" }}>
-                    <div onClick={() => setExpandedSubs(p => ({ ...p, [subKey]: !p[subKey] }))}
-                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 10px", cursor: "pointer" }}>
-                      <span style={{ fontSize: 11, color: "#c4c9d0", fontWeight: 500 }}>{SUBGROUPS[subKey]}</span>
-                      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        {subCount > 0 && <span style={P.ztB}>{subCount}</span>}
-                        <TI name={open ? "ti-chevron-down" : "ti-chevron-right"} size={14} color="#5f6672" />
-                      </span>
-                    </div>
-                    {open && <div style={{ ...P.ztRow, padding: "0 10px 8px" }}>{subZones.map(([k, v]) => renderZone(k, v))}</div>}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-    </>
-  );
-
-
-  
+  // ═══════════ ARCHIVE (File System Access API) ═══════════
   const loadArchive = async (handle) => {
     try {
       const patients = [];
@@ -1702,6 +1598,7 @@ ${notes ? notes : "Нотаток немає. Опиши абсолютну но
     archiveStatus, setArchiveStatus,
     archivePatients, setArchivePatients,
     archiveLoading, setArchiveLoading,
+    uploadProgress,
     cloudSyncStatus, setCloudSyncStatus,
     apiKeyIn, setApiKeyIn,
     aiModel, setAiModel,
@@ -1773,6 +1670,7 @@ ${notes ? notes : "Нотаток немає. Опиши абсолютну но
     seriesKey, sortSlices, curImgs, allImgs, totalCount, seriesCounts,
     analyze, generateReport, generateAiReport,
     onViewerWheel, resetZoom, onViewerPanStart, onViewerPanMove, onViewerPanEnd,
+    onWindowStart, onWindowMove, onWindowEnd,
     loadArchive, linkArchive, restoreArchiveAccess, unlinkArchive, openPatientFromArchive,
     fetchCloudStudies, syncingCloud,
     isLocked, setIsLocked

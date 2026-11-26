@@ -8,7 +8,7 @@ import { dbPut } from "../services/db.js";
 export default function NewStudy() {
   const {
     study, setStudy, setScr, setPrevScr, curImgs, totalCount,
-    seriesKey, anon, setAnon, folderIn, patIn, uploadImgs,
+    seriesKey, anon, setAnon, folderIn, patIn, uploadImgs, uploadProgress,
     vnotes, recording, startVoice, stopVoice, setStudies, studies
   } = React.useContext(AppContext);
 
@@ -216,6 +216,17 @@ export default function NewStudy() {
       </div>
 
       <label style={P.lb}>Завантаження знімків ({tc} зрізів у всіх серіях)</label>
+      {uploadProgress && (
+        <div style={{ background: "#13161c", border: "0.5px solid rgba(74,163,223,.3)", borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#4aa3df", marginBottom: 6, fontFamily: "'JetBrains Mono',monospace" }}>
+            <span>Оброблено {uploadProgress.done} / {uploadProgress.total} файлів...</span>
+            <span>{Math.round((uploadProgress.done / Math.max(1, uploadProgress.total)) * 100)}%</span>
+          </div>
+          <div style={{ width: "100%", height: 4, background: "#1a1d24", borderRadius: 2, overflow: "hidden" }}>
+            <div style={{ height: "100%", background: "#4aa3df", width: `${Math.round((uploadProgress.done / Math.max(1, uploadProgress.total)) * 100)}%`, transition: "width .15s" }} />
+          </div>
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
         {/* Folder upload - like RadiAnt */}
         <div 

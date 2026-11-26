@@ -83,6 +83,8 @@ export const P = {
   disc: { display: "flex", alignItems: "flex-start", gap: 7, background: "#13161c", border: "0.5px solid rgba(255,255,255,.06)", borderRadius: 6, padding: "10px 12px", marginTop: 18 },
   ov: { position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 12 },
   pan: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "22px 18px", width: "92%", maxWidth: 380 },
+  mPan: { background: "#13161c", border: "0.5px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "20px 18px", position: "relative", maxHeight: "88vh", overflowY: "auto" },
+  btn: { background: "#1a1d24", border: "0.5px solid rgba(255,255,255,.1)", borderRadius: 6, padding: "8px 14px", fontSize: 12, fontWeight: 500, color: "#e8eaed", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: "'IBM Plex Sans',sans-serif" },
   panT: { fontSize: 15, fontWeight: 500, color: "#e8eaed", marginBottom: 10 },
   pri: { width: "100%", background: "#1d6ea8", border: "none", borderRadius: 6, padding: 10, fontSize: 13, fontWeight: 500, color: "#fff", cursor: "pointer", marginTop: 8, fontFamily: "'IBM Plex Sans',sans-serif", display: "flex", alignItems: "center", justifyContent: "center" },
   clX: { position: "absolute", top: -7, right: -7, background: "rgba(226,75,74,.85)", border: "none", borderRadius: "50%", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", cursor: "pointer", zIndex: 10 },

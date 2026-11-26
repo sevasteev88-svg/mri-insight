@@ -10,7 +10,7 @@ export default function Dash() {
     setScr, apiKey, aiModel, refs, atlas, kb, studies, 
     setShowSet, showArchive, setShowArchive, 
     newStudy, loadStudy, archiveStudy, unarchiveStudy, deleteStudy,
-    archiveStatus, archiveLoading, archivePatients, archiveHandle,
+    archiveStatus, archiveLoading, archivePatients, archiveHandle, uploadProgress,
     unlinkArchive, linkArchive, restoreArchiveAccess, openPatientFromArchive,
     cloudSyncStatus, fetchCloudStudies, syncingCloud,
     setIsLocked
@@ -112,7 +112,9 @@ export default function Dash() {
           </div>
 
           {archiveLoading ? (
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#4aa3df", fontSize: 13, padding: "20px 0" }}>Завантаження пацієнта...</div>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#4aa3df", fontSize: 13, padding: "20px 0" }}>
+              Завантаження пацієнта...{uploadProgress ? ` (${uploadProgress.done} / ${uploadProgress.total})` : ""}
+            </div>
           ) : archiveStatus === "none" ? (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "10px 0" }}>
               <p style={{ fontSize: 12, color: "#8b919c", marginBottom: 12 }}>Підключіть локальну папку (напр. D:\MRI_Archive).</p>

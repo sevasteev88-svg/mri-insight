@@ -95,7 +95,7 @@ export default function SplitScreen() {
 
     // Load another study when compareStudyId changes
     useEffect(() => {
-      if (!compareStudyId || compareStudyId === study?.id) {
+      if (!compareStudyId || String(compareStudyId) === String(study?.id)) {
         setCompareStudyData(null);
         return;
       }
@@ -685,7 +685,7 @@ export default function SplitScreen() {
                   <select
                     value={compareStudyId || ""}
                     onChange={(e) => {
-                      const val = e.target.value ? Number(e.target.value) : null;
+                      const val = e.target.value || null;
                       setCompareStudyId(val);
                       resetZoom("R");
                     }}
@@ -706,7 +706,7 @@ export default function SplitScreen() {
                     </option>
                     {(() => {
                       const currentPatient = (study?.patientName || "").trim().toLowerCase();
-                      const otherStudies = (studies || []).filter(s => s.id !== study?.id);
+                      const otherStudies = (studies || []).filter(s => String(s.id) !== String(study?.id));
                       // Sort same patient's studies first
                       const samePatient = otherStudies.filter(s => (s.pn || "").trim().toLowerCase() === currentPatient);
                       const differentPatient = otherStudies.filter(s => (s.pn || "").trim().toLowerCase() !== currentPatient);
