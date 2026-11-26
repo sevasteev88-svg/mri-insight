@@ -6,13 +6,91 @@ import { SettingsModal, ImageViewModal, ReportModal, RefPreviewModal } from "./c
 import { AuthModal } from "./components/AuthModal.jsx";
 import { ConfirmModal } from "./components/ConfirmModal.jsx";
 
-const Dash = lazy(() => import("./components/Dash.jsx"));
-const Lib = lazy(() => import("./components/Lib.jsx"));
-const NewStudy = lazy(() => import("./components/NewStudy.jsx"));
-const SplitScreen = lazy(() => import("./components/SplitScreen.jsx"));
-const RadioScreen = lazy(() => import("./components/RadioScreen.jsx"));
-const Loading = lazy(() => import("./components/Loading.jsx"));
-const Results = lazy(() => import("./components/Results.jsx"));
+function triggerChunkRecoveryReload() {
+  try {
+    const now = Date.now();
+    const last = Number(sessionStorage.getItem("mri_chunk_reload_ts") || "0");
+    if (now - last > 10000) {
+      sessionStorage.setItem("mri_chunk_reload_ts", String(now));
+      window.location.reload();
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("vite:preloadError", (event) => {
+    event.preventDefault();
+    triggerChunkRecoveryReload();
+  });
+}
+
+function lazyWithRetry(importer) {
+  return lazy(() =>
+    importer().catch((err) => {
+      const msg = String(err?.message || err || "");
+      const isChunkError =
+        msg.includes("Failed to fetch dynamically imported module") ||
+        msg.includes("Importing a module script failed") ||
+        msg.includes("ChunkLoadError");
+      if (isChunkError && triggerChunkRecoveryReload()) {
+        return new Promise(() => {});
+      }
+      throw err;
+    })
+  );
+}
+
+const Dash = lazyWithRetry(() => import("./components/Dash.jsx"));
+const Lib = lazyWithRetry(() => import("./components/Lib.jsx"));
+const NewStudy = lazyWithRetry(() => import("./components/NewStudy.jsx"));
+const SplitScreen = lazyWithRetry(() => import("./components/SplitScreen.jsx"));
+const RadioScreen = lazyWithRetry(() => import("./components/RadioScreen.jsx"));
+const Loading = lazyWithRetry(() => import("./components/Loading.jsx"));
+const Results = lazyWithRetry(() => import("./components/Results.jsx"));
+
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error("AppErrorBoundary caught error:", error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      const msg = this.state.error?.message || "Невідома помилка завантаження модуля";
+      return (
+        <div style={{ ...P.app, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div style={{ maxWidth: 420, width: "100%", background: "#13161c", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: 22, textAlign: "center" }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", margin: "0 0 8px" }}>
+              Виникла помилка відображення
+            </h3>
+            <p style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.5, margin: "0 0 16px" }}>
+              {msg.includes("dynamically imported module")
+                ? "Додаток оновився на сервері. Оновіть сторінку, щоб завантажити нову версію."
+                : msg}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              style={{ ...P.pri, padding: "10px 18px", fontSize: 13 }}
+            >
+              Оновити сторінку
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function AppContent() {
   const { scr, setScr, toast, isLocked, setIsLocked } = useContext(AppContext);
@@ -48,7 +126,9 @@ function AppContent() {
 export default function App() {
   return (
     <AppProvider>
-      <AppContent />
+      <AppErrorBoundary>
+        <AppContent />
+      </AppErrorBoundary>
     </AppProvider>
   );
 }

@@ -1429,7 +1429,7 @@ export function AppProvider({ children }) {
   // Wheel: scroll = navigate slices, Ctrl+wheel = zoom
   const onViewerWheel = (side, e, navFn, count) => {
     if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
+      if (e.cancelable) e.preventDefault();
       const z = getZoom(side);
       const delta = e.deltaY < 0 ? 1.15 : 1 / 1.15;
       const newScale = Math.max(1, Math.min(6, z.scale * delta));
@@ -1437,7 +1437,7 @@ export function AppProvider({ children }) {
       if (newScale === 1) setZoom(side, { scale: 1, x: 0, y: 0 });
       else setZoom(side, { ...z, scale: newScale });
     } else {
-      e.preventDefault();
+      if (e.cancelable) e.preventDefault();
       const dir = e.deltaY > 0 ? 1 : -1;
       navFn(dir, count);
     }
