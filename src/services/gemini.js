@@ -116,9 +116,15 @@ export async function runInteraction({
       ? "low"
       : thinkingLevel;
 
+  // Gemini Interactions v1 expects array inputs to be Step objects (e.g. type: "user_input" with content array)
+  const normalizedInput =
+    Array.isArray(input) && input.length > 0 && input[0]?.type !== "user_input"
+      ? [{ type: "user_input", content: input }]
+      : input;
+
   const params = {
     model: targetModel,
-    input,
+    input: normalizedInput,
     generation_config: {
       thinking_level: safeThinking || "medium"
     }
