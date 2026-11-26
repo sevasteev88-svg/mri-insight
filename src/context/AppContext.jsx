@@ -69,7 +69,11 @@ export function AppProvider({ children }) {
   const [aiMarkers, setAiMarkers] = useState({});
   const [aiScanning, setAiScanning] = useState(false);
   const [toolMode, setToolMode] = useState("roi");
-  const [measurements, setMeasurements] = useState([]);
+  const [measurementsBySlice, setMeasurementsBySlice] = useState({});
+  const [confirmDialog, setConfirmDialog] = useState(null);
+  const askConfirm = ({ title, message, confirmLabel = "Підтвердити", danger = false, onConfirm }) => {
+    setConfirmDialog({ title, message, confirmLabel, danger, onConfirm });
+  };
   const [activeMeasure, setActiveMeasure] = useState(null);
   const [activeArea, setActiveArea] = useState(null);
   const [activeAngle, setActiveAngle] = useState([]);
@@ -949,38 +953,40 @@ export function AppProvider({ children }) {
     
     const img = new window.Image();
     await new Promise(r => { img.onload = r; img.src = imgObj.data; });
-    const rect = roiImgRef.current.getBoundingClientRect();
-    const scaleX = rect.width / (img.width || 512);
-    const scaleY = rect.height / (img.height || 512);
+    const imgW = img.width || imgObj.cols || 512;
+    const imgH = img.height || imgObj.rows || 512;
 
     if (toolMode === "measure_line" && activeMeasure) {
-      const dxScreen = (activeMeasure.endX - activeMeasure.startX) * rect.width;
-      const dyScreen = (activeMeasure.endY - activeMeasure.startY) * rect.height;
-      const distScreen = Math.sqrt(dxScreen*dxScreen + dyScreen*dyScreen);
-      const distImg = distScreen / (scaleX || 1); // Assuming uniform scale mostly
-      
+      const dxImg = (activeMeasure.endX - activeMeasure.startX) * imgW;
+      const dyImg = (activeMeasure.endY - activeMeasure.startY) * imgH;
+      const distImg = Math.sqrt(dxImg * dxImg + dyImg * dyImg);
+
       let distMm = null;
-      if (imgObj.ps && imgObj.ps.length >= 1) distMm = distImg * imgObj.ps[0];
-      
-      if (distScreen > 5) {
+      if (imgObj.ps && imgObj.ps.length >= 2) {
+        const dxMm = dxImg * imgObj.ps[1];
+        const dyMm = dyImg * imgObj.ps[0];
+        distMm = Math.sqrt(dxMm * dxMm + dyMm * dyMm);
+      } else if (imgObj.ps && imgObj.ps.length >= 1) {
+        distMm = distImg * imgObj.ps[0];
+      }
+
+      if (distImg > 3) {
         setMeasurements([...measurements, { type: "line", ...activeMeasure, mm: distMm, px: distImg }]);
       }
       setActiveMeasure(null);
       
     } else if (toolMode === "measure_area" && activeArea) {
-      const dxScreen = Math.abs(activeArea.endX - activeArea.startX) * rect.width;
-      const dyScreen = Math.abs(activeArea.endY - activeArea.startY) * rect.height;
-      const rxImg = (dxScreen / 2) / (scaleX || 1);
-      const ryImg = (dyScreen / 2) / (scaleY || 1);
-      
+      const rxImg = (Math.abs(activeArea.endX - activeArea.startX) * imgW) / 2;
+      const ryImg = (Math.abs(activeArea.endY - activeArea.startY) * imgH) / 2;
+
       let areaMm2 = null;
       if (imgObj.ps && imgObj.ps.length >= 2) {
-        areaMm2 = Math.PI * (rxImg * imgObj.ps[0]) * (ryImg * imgObj.ps[1]);
+        areaMm2 = Math.PI * (rxImg * imgObj.ps[1]) * (ryImg * imgObj.ps[0]);
       } else if (imgObj.ps && imgObj.ps.length >= 1) {
         areaMm2 = Math.PI * (rxImg * imgObj.ps[0]) * (ryImg * imgObj.ps[0]);
       }
-      
-      if (dxScreen > 5 && dyScreen > 5) {
+
+      if (rxImg > 2 && ryImg > 2) {
         setMeasurements([...measurements, { type: "area", ...activeArea, areaMm2 }]);
       }
       setActiveArea(null);
@@ -1138,6 +1144,16 @@ export function AppProvider({ children }) {
     if (study?.series?.[standard]) return standard;
     return study?.activeSeriesKey || zonePrefixed;
   };
+  const currentSliceKey = `${seriesKey()}-${splitIdx}`;
+  const measurements = measurementsBySlice[currentSliceKey] || [];
+  const setMeasurements = (nextOrUpdater) => {
+    setMeasurementsBySlice(prev => {
+      const curr = prev[currentSliceKey] || [];
+      const next = typeof nextOrUpdater === "function" ? nextOrUpdater(curr) : nextOrUpdater;
+      return { ...prev, [currentSliceKey]: next };
+    });
+  };
+  const clearSliceMeasurements = () => setMeasurements([]);
     const sortSlices = (slices) => {
     if (!slices || slices.length <= 1) return slices || [];
     return [...slices].sort((a, b) => {
@@ -1647,7 +1663,8 @@ ${notes ? notes : "Нотаток немає. Опиши абсолютну но
     aiMarkers, setAiMarkers,
     aiScanning, setAiScanning,
     toolMode, setToolMode,
-    measurements, setMeasurements,
+    measurements, setMeasurements, measurementsBySlice, clearSliceMeasurements,
+    confirmDialog, setConfirmDialog, askConfirm,
     activeMeasure, setActiveMeasure,
     activeArea, setActiveArea,
     activeAngle, setActiveAngle,

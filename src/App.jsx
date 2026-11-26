@@ -4,6 +4,7 @@ import { P } from "./styles/styles.js";
 
 import { SettingsModal, ImageViewModal, ReportModal, RefPreviewModal } from "./components/Modals.jsx";
 import { AuthModal } from "./components/AuthModal.jsx";
+import { ConfirmModal } from "./components/ConfirmModal.jsx";
 
 const Dash = lazy(() => import("./components/Dash.jsx"));
 const Lib = lazy(() => import("./components/Lib.jsx"));
@@ -36,6 +37,7 @@ function AppContent() {
       <ImageViewModal />
       <ReportModal />
       <RefPreviewModal />
+      <ConfirmModal />
 
       {/* Global Toast Notification */}
       {toast && <div style={P.toast}>{toast}</div>}

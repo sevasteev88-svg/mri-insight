@@ -217,7 +217,7 @@ export default function Lib() {
               <h3 style={{ ...P.panT, color: "#f59e0b", display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
                 <FileText size={16} /> {kbModal.mode === "create" ? `Додати правило: ${ZONES[selZone]?.short}` : "Редагувати правило"}
               </h3>
-              <button onClick={() => setKbModal(null)} style={P.clX}><X size={16} /></button>
+              <button onClick={() => setKbModal(null)} style={{ background: "rgba(255,255,255,.06)", border: "none", borderRadius: 6, padding: 5, color: "#8b919c", cursor: "pointer", display: "flex" }}><X size={16} /></button>
             </div>
 
             <div style={{ marginBottom: 10 }}>
@@ -282,7 +282,7 @@ export default function Lib() {
               <h3 style={{ ...P.panT, color: "#a78bfa", display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
                 <BookOpen size={16} /> Додати до атласу: {ZONES[selZone]?.short}
               </h3>
-              <button onClick={() => setAtlasModal(null)} style={P.clX}><X size={16} /></button>
+              <button onClick={() => setAtlasModal(null)} style={{ background: "rgba(255,255,255,.06)", border: "none", borderRadius: 6, padding: 5, color: "#8b919c", cursor: "pointer", display: "flex" }}><X size={16} /></button>
             </div>
 
             {atlasModal.data && (

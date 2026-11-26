@@ -1,7 +1,7 @@
-import React from "react";
+import React, { useState } from "react";
 import { AppContext } from "../context/AppContext.jsx";
 import { P } from "../styles/styles.js";
-import { Brain, Settings, AlertCircle, Plus, BookOpen, ExternalLink, Archive, Trash2, RotateCcw, Folder, User, X, ChevronRight, Cloud, CloudOff, RefreshCw, Lock } from "lucide-react";
+import { Brain, Settings, AlertCircle, Plus, BookOpen, ExternalLink, Archive, Trash2, RotateCcw, Folder, User, X, ChevronRight, Cloud, CloudOff, RefreshCw, Lock, Search } from "lucide-react";
 import { ZONES, ZONE_GROUPS } from "../constants/anatomy.js";
 import TI from "./TI.jsx";
 
@@ -9,12 +9,16 @@ export default function Dash() {
   const { 
     setScr, apiKey, aiModel, refs, atlas, kb, studies, 
     setShowSet, showArchive, setShowArchive, 
-    newStudy, loadStudy, archiveStudy, unarchiveStudy, deleteStudy,
+    newStudy, loadStudy, archiveStudy, unarchiveStudy, deleteStudy, askConfirm,
     archiveStatus, archiveLoading, archivePatients, archiveHandle, uploadProgress,
     unlinkArchive, linkArchive, restoreArchiveAccess, openPatientFromArchive,
     cloudSyncStatus, fetchCloudStudies, syncingCloud,
     setIsLocked
   } = React.useContext(AppContext);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [zoneFilter, setZoneFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all"); // "all" | "findings" | "normal" | "notes"
 
   return (
     <div style={P.pg}>
@@ -75,22 +79,22 @@ export default function Dash() {
           </div>
         )}
 
-        <div style={P.g3}>
-          <button onClick={newStudy} style={P.act}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginBottom: 16 }}>
+          <button onClick={newStudy} className="mri-card-hover" style={P.act}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <Plus size={18} style={{ color: "#4aa3df" }} />
               <span style={P.aLb}>Нове дослідження</span>
             </div>
             <span style={{ fontSize: 11, color: "#5f6672" }}>Завантажити серії пацієнта</span>
           </button>
-          <button onClick={() => setScr("lib")} style={P.act}>
+          <button onClick={() => setScr("lib")} className="mri-card-hover" style={P.act}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <BookOpen size={18} style={{ color: "#9b8cdb" }} />
               <span style={P.aLb}>Бібліотека</span>
             </div>
             <span style={{ fontSize: 11, color: "#5f6672" }}>Норми · атлас · база знань</span>
           </button>
-          <button onClick={() => setScr("radio")} style={P.act}>
+          <button onClick={() => setScr("radio")} className="mri-card-hover" style={P.act}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <ExternalLink size={18} style={{ color: "#4ec99b" }} />
               <span style={P.aLb}>Radiopaedia</span>
@@ -159,7 +163,23 @@ export default function Dash() {
 
         {/* Grouped patient studies list */}
         {(() => {
-          const filteredStudies = studies.filter(s => showArchive ? s.archived : !s.archived);
+          const baseStudies = studies.filter(s => showArchive ? s.archived : !s.archived);
+          const availableZones = Array.from(new Set(baseStudies.map(s => s.z).filter(Boolean)));
+          const q = searchQuery.trim().toLowerCase();
+
+          const filteredStudies = baseStudies.filter(s => {
+            if (zoneFilter !== "all" && s.z !== zoneFilter) return false;
+            if (statusFilter === "findings" && !(s.fc > 0)) return false;
+            if (statusFilter === "normal" && (s.fc > 0)) return false;
+            if (statusFilter === "notes" && !s.hasNotes) return false;
+            if (q) {
+              const pName = (s.pn || "Невідомий пацієнт").toLowerCase();
+              const zName = (ZONES[s.z]?.ua || ZONES[s.z]?.short || s.z || "").toLowerCase();
+              const dateStr = (s.mriDate || s.d || "").toLowerCase();
+              if (!pName.includes(q) && !zName.includes(q) && !dateStr.includes(q)) return false;
+            }
+            return true;
+          });
           
           const groupedByPatient = filteredStudies.reduce((acc, s) => {
             const name = (s.pn || "Невідомий пацієнт").trim();
@@ -172,7 +192,7 @@ export default function Dash() {
 
           return (
             <div style={{ marginTop: 20 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <p style={{ ...P.secT, margin: 0 }}>
                     {showArchive ? "📁 Архів пацієнтів та травм" : "📋 Активні дослідження"}
@@ -217,9 +237,71 @@ export default function Dash() {
                 </div>
               </div>
 
+              {/* Search & Filter Toolbar */}
+              {baseStudies.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 12, padding: "8px 10px", background: "#11141a", border: "1px solid rgba(255,255,255,.06)", borderRadius: 8 }}>
+                  <div style={{ position: "relative", flex: "1 1 210px", display: "flex", alignItems: "center" }}>
+                    <Search size={14} color="#5f6672" style={{ position: "absolute", left: 10, pointerEvents: "none" }} />
+                    <input
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      placeholder="Пошук за ПІБ, зоною або датою..."
+                      style={{ ...P.inp, padding: "6px 28px 6px 30px", fontSize: 12, background: "#0c0e12" }}
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery("")}
+                        style={{ position: "absolute", right: 6, background: "none", border: "none", color: "#8b919c", cursor: "pointer", padding: 2, display: "flex" }}
+                        title="Очистити пошук"
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+
+                  <select
+                    value={zoneFilter}
+                    onChange={e => setZoneFilter(e.target.value)}
+                    style={{ ...P.inp, width: "auto", minWidth: 145, padding: "6px 10px", fontSize: 12, background: "#0c0e12", cursor: "pointer" }}
+                  >
+                    <option value="all">Усі зони</option>
+                    {availableZones.map(z => (
+                      <option key={z} value={z}>{ZONES[z]?.short || ZONES[z]?.ua || z}</option>
+                    ))}
+                  </select>
+
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {[
+                      ["all", "Усі"],
+                      ["findings", "Зі знахідками"],
+                      ["normal", "Норма"],
+                      ["notes", "З нотатками"]
+                    ].map(([val, lbl]) => (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => setStatusFilter(val)}
+                        style={{
+                          ...(statusFilter === val ? P.sqOn : P.sq),
+                          padding: "5px 10px",
+                          fontSize: 11
+                        }}
+                      >
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {sortedPatientNames.length === 0 ? (
                 <p style={{ fontSize: 13, color: "#5f6672", textAlign: "center", padding: "20px 0" }}>
-                  {showArchive ? "Архів порожній" : "Немає активних досліджень. Створіть нове дослідження вище."}
+                  {baseStudies.length > 0
+                    ? "За вибраними фільтрами нічого не знайдено."
+                    : showArchive
+                      ? "Архів порожній"
+                      : "Немає активних досліджень. Створіть нове дослідження вище."}
                 </p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -244,7 +326,8 @@ export default function Dash() {
                             <div 
                               key={s.id} 
                               onClick={() => loadStudy(s.id)}
-                              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#161a22", border: "0.5px solid rgba(255,255,255,.05)", borderRadius: 8, padding: "9px 12px", cursor: "pointer", transition: "border-color .15s" }}
+                              className="mri-card-hover"
+                              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#161a22", border: "0.5px solid rgba(255,255,255,.05)", borderRadius: 8, padding: "9px 12px", cursor: "pointer" }}
                             >
                               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                                 <i className="ti ti-scan" style={{ fontSize: 16, color: "#4aa3df" }} aria-hidden="true" />
@@ -263,12 +346,12 @@ export default function Dash() {
                                 {showArchive ? (
                                   <>
                                     <button onClick={(e) => { e.stopPropagation(); unarchiveStudy(s.id); }} title="Відновити з архіву" style={{ ...P.sm, color: "#9b8cdb", padding: 4 }}><RotateCcw size={13} /></button>
-                                    <button onClick={(e) => { e.stopPropagation(); if (confirm("Видалити назавжди?")) deleteStudy(s.id); }} title="Видалити назавжди" style={{ ...P.sm, color: "#e24b4a", padding: 4 }}><Trash2 size={13} /></button>
+                                    <button onClick={(e) => { e.stopPropagation(); askConfirm({ title: "Видалити дослідження?", message: `Дослідження «${pName}» буде видалено назавжди.`, confirmLabel: "Видалити", danger: true, onConfirm: () => deleteStudy(s.id) }); }} title="Видалити назавжди" style={{ ...P.sm, color: "#e24b4a", padding: 4 }}><Trash2 size={13} /></button>
                                   </>
                                 ) : (
                                   <>
                                     <button onClick={(e) => { e.stopPropagation(); archiveStudy(s.id); }} title="Перемістити в архів" style={{ ...P.sm, color: "#8b919c", padding: 4 }}><Archive size={13} /></button>
-                                    <button onClick={(e) => { e.stopPropagation(); if (confirm("Видалити пацієнта назавжди?")) deleteStudy(s.id); }} title="Видалити назавжди" style={{ ...P.sm, color: "#e24b4a", padding: 4 }}><Trash2 size={13} /></button>
+                                    <button onClick={(e) => { e.stopPropagation(); askConfirm({ title: "Видалити дослідження?", message: `Дослідження «${pName}» буде видалено назавжди.`, confirmLabel: "Видалити", danger: true, onConfirm: () => deleteStudy(s.id) }); }} title="Видалити назавжди" style={{ ...P.sm, color: "#e24b4a", padding: 4 }}><Trash2 size={13} /></button>
                                   </>
                                 )}
                                 <ChevronRight size={14} style={{ color: "#5f6672" }} />

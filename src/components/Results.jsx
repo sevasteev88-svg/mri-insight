@@ -18,7 +18,7 @@ export default function Results() {
     goToSlice, attachIn, reviewConclusion, reviewLoading, setViewImg,
     handleAttachment, recording, stopVoice, startVoice, recRef, setRecording,
     setShowReport, setReportText, conclusionReview, confirmConclusion,
-    archiveStudy, deleteStudy, extractConclusionText, ocrLoading
+    archiveStudy, deleteStudy, extractConclusionText, ocrLoading, askConfirm
   } = React.useContext(AppContext);
 
   const f = study?.findings || [];
@@ -615,7 +615,7 @@ export default function Results() {
         <button onClick={() => archiveStudy(study.id)} style={{ ...P.sm, padding: "10px 16px", fontSize: 12, flex: 1, justifyContent: "center", background: "rgba(139,92,246,.08)", border: "1px solid rgba(139,92,246,.18)", color: "#a78bfa" }}>
           <Archive size={14} style={{ marginRight: 4 }} /> В архів
         </button>
-        <button onClick={() => { if (confirm("Видалити це дослідження назавжди?")) deleteStudy(study.id); }} style={{ ...P.sm, padding: "10px 16px", fontSize: 12, flex: 1, justifyContent: "center", background: "rgba(226,75,74,.08)", border: "1px solid rgba(226,75,74,.2)", color: "#e24b4a" }}>
+        <button onClick={() => askConfirm({ title: "Видалити дослідження?", message: `Дослідження пацієнта «${study?.patientName || "Пацієнт"}» буде видалено назавжди без можливості відновлення.`, confirmLabel: "Видалити назавжди", danger: true, onConfirm: () => deleteStudy(study.id) })} style={{ ...P.sm, padding: "10px 16px", fontSize: 12, flex: 1, justifyContent: "center", background: "rgba(226,75,74,.08)", border: "1px solid rgba(226,75,74,.2)", color: "#e24b4a" }}>
           <Trash2 size={14} style={{ marginRight: 4 }} /> Видалити назавжди
         </button>
       </div>
