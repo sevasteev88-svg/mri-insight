@@ -5,12 +5,13 @@ import {
   ArrowLeft, CheckCircle, BookOpen, Columns, FileText, 
   Save, Star, Eye, Trash2, Info, ExternalLink, Paperclip, 
   Upload, Brain, Mic, Shield, Archive, X, ScanText,
-  MessageSquare, ChevronDown, ChevronUp
+  MessageSquare, ChevronDown, ChevronUp, Printer
 } from "lucide-react";
 import { ZONES } from "../constants/anatomy.js";
 import { confColor, radioUrl } from "../utils/helpers.js";
 import { dbPut } from "../services/db.js";
 import { supabase } from "../services/supabase.js";
+import { syncMediaListToStorage, getMediaSrc } from "../services/storage.js";
 import StudyChat from "./StudyChat.jsx";
 
 export default function Results() {
@@ -85,16 +86,19 @@ export default function Results() {
               });
 
               // 1. Sync to Supabase
-              // Check if study.id is a valid UUID
               const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
               const supaId = isUuid ? study.id : (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : undefined);
               const targetId = supaId || study.id;
+
+              const syncedKeys = await syncMediaListToStorage(targetId, "key-images", cleanKeyImages);
+              const syncedAtts = await syncMediaListToStorage(targetId, "attachments", study.attachments || []);
 
               const toSave = { 
                 ...study, 
                 id: targetId,
                 vnotes: cleanVnotes,
-                keyImages: cleanKeyImages,
+                keyImages: syncedKeys.localItems,
+                attachments: syncedAtts.localItems,
                 status: (study.findings || []).length > 0 ? "done" : "draft" 
               };
               setStudy(toSave);
@@ -118,13 +122,13 @@ export default function Results() {
                 total_images: totalCount(),
                 doctor_notes: cleanVnotes,
                 ai_report: study.doctorReport || null,
-                key_images: cleanKeyImages,
+                key_images: syncedKeys.cloudItems,
                 findings: [
-                  ...(study.findings || []),
+                  ...(study.findings || []).filter(item => !item?._extra),
                   {
                     _extra: {
                       doctorNotesText: study.doctorNotes || "",
-                      attachments: study.attachments || [],
+                      attachments: syncedAtts.cloudItems,
                       conclusionReview: conclusionReview || study.conclusionReview || null
                     }
                   }
@@ -191,6 +195,20 @@ export default function Results() {
         >
           <Save size={15} style={{ marginRight: 6 }} /> Зберегти дослідження
         </button>
+        <button 
+          onClick={() => generateReport("clinical")}
+          style={{ ...P.sm, padding: "10px 14px", fontSize: 12, background: "rgba(6,182,212,.14)", color: "#22d3ee", border: "1px solid rgba(6,182,212,.3)" }}
+          title="Відкрити клінічний PDF-звіт з ключовими кадрами та знахідками"
+        >
+          <Printer size={14} style={{ marginRight: 5 }} /> PDF (Лікар)
+        </button>
+        <button 
+          onClick={() => generateReport("trainer")}
+          style={{ ...P.sm, padding: "10px 14px", fontSize: 12, background: "rgba(139,92,246,.14)", color: "#c4b5fd", border: "1px solid rgba(139,92,246,.3)" }}
+          title="Відкрити адаптований PDF-звіт для тренера"
+        >
+          <Printer size={14} style={{ marginRight: 5 }} /> PDF (Тренер)
+        </button>
         {zr.length > 0 && (
           <button onClick={() => setShowRefP(true)} style={{ ...P.rvBtn, padding: "10px 14px", fontSize: 12 }}>
             <BookOpen size={14} /> Довідник норми ({zr.length})
@@ -217,14 +235,16 @@ export default function Results() {
               <span style={{ fontSize: 10, color: "#8b919c" }}>Зберігаються в хмарі для перегляду з планшета</span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 10 }}>
-              {displayedKeyImages.map((kImg, i) => (
-                <div key={kImg.id || i} style={{ background: "#0f1217", border: "0.5px solid rgba(255,255,255,.08)", borderRadius: 8, overflow: "hidden" }}>
-                  <img 
-                    src={kImg.data} 
-                    alt={`Зріз ${kImg.sliceIdx}`} 
-                    style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block", cursor: "pointer" }} 
-                    onClick={() => setViewImg({ data: kImg.data, name: `${kImg.seq} ${kImg.plane} — Зріз ${kImg.sliceIdx}` })}
-                  />
+              {displayedKeyImages.map((kImg, i) => {
+                const kSrc = getMediaSrc(kImg);
+                return (
+                  <div key={kImg.id || i} style={{ background: "#0f1217", border: "0.5px solid rgba(255,255,255,.08)", borderRadius: 8, overflow: "hidden" }}>
+                    <img 
+                      src={kSrc} 
+                      alt={`Зріз ${kImg.sliceIdx}`} 
+                      style={{ width: "100%", aspectRatio: "1", objectFit: "cover", display: "block", cursor: "pointer" }} 
+                      onClick={() => setViewImg({ data: kSrc, url: kImg.url, name: `${kImg.seq} ${kImg.plane} — Зріз ${kImg.sliceIdx}` })}
+                    />
                   <div style={{ padding: "6px 8px" }}>
                     <p style={{ fontSize: 11, fontWeight: 600, color: "#e2e8f0", margin: 0 }}>
                       {kImg.seq} {kImg.plane} #{kImg.sliceIdx}
@@ -236,7 +256,8 @@ export default function Results() {
                     )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         );
@@ -398,15 +419,17 @@ export default function Results() {
         {(study?.attachments || []).length > 0 && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(120px,1fr))", gap: 8, marginBottom: 12 }}>
             {study.attachments.filter(Boolean).map((att) => {
+              const attSrc = getMediaSrc(att);
               const isImage = (att.type && typeof att.type === "string" && att.type.startsWith("image/")) || 
                               (att.data && typeof att.data === "string" && att.data.startsWith("data:image/")) ||
-                              (att.name && /\.(png|jpe?g|webp|gif)$/i.test(att.name));
+                              (att.name && /\.(png|jpe?g|webp|gif)$/i.test(att.name)) ||
+                              (att.url && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(att.url));
               return (
                 <div key={att.id || att.name} style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 8, overflow: "hidden", position: "relative" }}>
                   {isImage ? (
-                    <img src={att.data} alt={att.name || "Вкладення"} style={{ width: "100%", display: "block", cursor: "pointer", borderRadius: "8px 8px 0 0" }} onClick={() => setViewImg(att)} />
+                    <img src={attSrc} alt={att.name || "Вкладення"} style={{ width: "100%", display: "block", cursor: "pointer", borderRadius: "8px 8px 0 0" }} onClick={() => setViewImg(att)} />
                   ) : (
-                    <div onClick={() => { if (att.data) { const w = window.open(); w.document.write(`<iframe src="${att.data}" style="width:100%;height:100vh;border:none"></iframe>`); } }} style={{ height: 100, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: "rgba(245,158,11,.06)" }}>
+                    <div onClick={() => { if (att.url) { window.open(att.url, "_blank"); } else if (att.data) { const w = window.open(); w.document.write(`<iframe src="${att.data}" style="width:100%;height:100vh;border:none"></iframe>`); } }} style={{ height: 100, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", background: "rgba(245,158,11,.06)" }}>
                       <FileText size={28} style={{ color: "#f59e0b" }} />
                     </div>
                   )}
@@ -420,13 +443,14 @@ export default function Results() {
                     try {
                       const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
                       if (isUuid) {
+                        const syncedAtts = await syncMediaListToStorage(study.id, "attachments", upd);
                         await supabase.from("studies").update({
                           findings: [
                             ...(study.findings || []).filter(item => !item?._extra),
                             {
                               _extra: {
                                 doctorNotesText: study.doctorNotes || "",
-                                attachments: upd,
+                                attachments: syncedAtts.cloudItems,
                                 conclusionReview: conclusionReview || study.conclusionReview || null
                               }
                             }
@@ -466,15 +490,16 @@ export default function Results() {
                 try {
                   const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
                   if (isUuid) {
+                    const syncedAtts = await syncMediaListToStorage(study.id, "attachments", study.attachments || []);
                     await supabase.from("studies").update({
                       complaints: study.complaints || null,
                       mechanism: study.mechanism || null,
                       findings: [
-                        ...(study.findings || []),
+                        ...(study.findings || []).filter(item => !item?._extra),
                         {
                           _extra: {
                             doctorNotesText: study.doctorNotes || "",
-                            attachments: study.attachments || [],
+                            attachments: syncedAtts.cloudItems,
                             conclusionReview: conclusionReview || study.conclusionReview || null
                           }
                         }

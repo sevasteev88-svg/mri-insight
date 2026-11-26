@@ -17,6 +17,8 @@ import {
   generateMedicalProtocol,
   transcribeMedicalAudio
 } from "../services/gemini.js";
+import { openPrintableReport } from "../utils/reportExport.js";
+import { syncMediaListToStorage, ensureAttachmentDataUrl } from "../services/storage.js";
 
 const isUuid = (id) => typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
@@ -68,8 +70,8 @@ export function AppProvider({ children }) {
   const [manualQuery, setManualQuery] = useState("");
   // Viewer zoom/pan state — separate for patient (L) and reference (R) panels
   const [zoomL, setZoomL] = useState({ scale: 1, x: 0, y: 0 });
-  const [wlL, setWlL] = useState({ b: 100, c: 100 });
-  const [wlR, setWlR] = useState({ b: 100, c: 100 });
+  const [wlL, setWlL] = useState({ b: 100, c: 100, wc: null, ww: null, invert: false, preset: "auto" });
+  const [wlR, setWlR] = useState({ b: 100, c: 100, wc: null, ww: null, invert: false, preset: "auto" });
   const [windowing, setWindowing] = useState(null);
   const [rightMode, setRightMode] = useState("ref");
   const [compareSeriesKey, setCompareSeriesKey] = useState(null);
@@ -311,6 +313,12 @@ export function AppProvider({ children }) {
         let imageOrientationPatient = null;
         let sliceRows = undefined;
         let sliceCols = undefined;
+        let sliceRawPixels = null;
+        let sliceWc = null;
+        let sliceWw = null;
+        let sliceMinVal = null;
+        let sliceMaxVal = null;
+        let sliceIsMono1 = false;
 
         // Attempt DICOM parsing in Web Worker for all files unless explicitly standard web images
         const isStandardWebImage = f.type.startsWith("image/png") || f.type.startsWith("image/jpeg") || f.type.startsWith("image/webp");
@@ -321,6 +329,12 @@ export function AppProvider({ children }) {
             if (parsed?.ok) {
               sliceRows = parsed.rows;
               sliceCols = parsed.cols;
+              sliceRawPixels = parsed.rawPixels || null;
+              sliceWc = parsed.wc ?? null;
+              sliceWw = parsed.ww ?? null;
+              sliceMinVal = parsed.minVal ?? null;
+              sliceMaxVal = parsed.maxVal ?? null;
+              sliceIsMono1 = Boolean(parsed.isMonochrome1);
               ps = parsed.ps;
               instanceNumber = parsed.instanceNumber;
               sliceLocation = parsed.sliceLocation;
@@ -389,7 +403,13 @@ export function AppProvider({ children }) {
           imageOrientationPatient,
           rows: sliceRows,
           cols: sliceCols,
-          zone: zoneFinal 
+          rawPixels: sliceRawPixels,
+          wc: sliceWc,
+          ww: sliceWw,
+          minVal: sliceMinVal,
+          maxVal: sliceMaxVal,
+          isMonochrome1: sliceIsMono1,
+          zone: zoneFinal
         };
 
         if (target === "ref") {
@@ -780,17 +800,24 @@ export function AppProvider({ children }) {
     // Save updated study to local DB
     try { await dbPut("studies", String(study.id), updatedStudy); } catch {}
 
-    // Also sync to Supabase if study.id is a UUID or exists in cloud
+    let finalLocalAttachments = attachments;
+
+    // Also sync to Supabase (offloading binary payloads to Storage when bucket is available)
     try {
-      const isUuid = typeof study.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(study.id);
-      if (isUuid) {
+      if (isUuid(study.id)) {
+        const synced = await syncMediaListToStorage(study.id, "attachments", attachments);
+        finalLocalAttachments = synced.localItems;
+        const syncedStudy = { ...updatedStudy, attachments: finalLocalAttachments };
+        setStudy(syncedStudy);
+        try { await dbPut("studies", String(study.id), syncedStudy); } catch {}
+
         await supabase.from("studies").update({
           findings: [
-            ...(study.findings || []),
+            ...(study.findings || []).filter(item => !item?._extra),
             {
               _extra: {
                 doctorNotesText: study.doctorNotes || "",
-                attachments: attachments,
+                attachments: synced.cloudItems,
                 conclusionReview: conclusionReview || study.conclusionReview || null
               }
             }
@@ -811,15 +838,31 @@ export function AppProvider({ children }) {
       flash("Будь ласка, вкажіть Gemini API ключ у налаштуваннях");
       return;
     }
-    const attachments = (study?.attachments || []).filter(a => a.data && (a.type?.startsWith("image/") || a.data.startsWith("data:image/") || a.type === "application/pdf" || a.data.startsWith("data:application/pdf")));
-    if (attachments.length === 0) {
+    const rawAttachments = (study?.attachments || []).filter(a =>
+      a && (a.data || a.url) && (
+        a.type?.startsWith("image/") ||
+        a.data?.startsWith("data:image/") ||
+        a.type === "application/pdf" ||
+        a.data?.startsWith("data:application/pdf") ||
+        /\.(png|jpe?g|webp|pdf)$/i.test(a.name || a.url || "")
+      )
+    );
+    if (rawAttachments.length === 0) {
       flash("Прикріпіть фото або PDF заключення МРТ центру");
       return;
     }
 
     setOcrLoading(true);
     try {
-      const extractedText = await extractConclusionOcr({ apiKey, model: aiModel, attachments });
+      const resolvedAttachments = [];
+      for (const att of rawAttachments) {
+        const data = await ensureAttachmentDataUrl(att);
+        if (data) resolvedAttachments.push({ ...att, data });
+      }
+      if (resolvedAttachments.length === 0) {
+        throw new Error("Не вдалося завантажити файли вкладення для розпізнавання");
+      }
+      const extractedText = await extractConclusionOcr({ apiKey, model: aiModel, attachments: resolvedAttachments });
       if (!extractedText) throw new Error("Не вдалося розпізнати текст на зображенні");
 
       const existingNotes = study.doctorNotes || "";
@@ -867,17 +910,25 @@ export function AppProvider({ children }) {
   // AI review of center's conclusion
   const reviewConclusion = async () => {
     if (!apiKey || !study) return;
-    const attachments = study.attachments || [];
-    if (attachments.length === 0) { flash("Спочатку додайте заключення від центру"); return; }
+    const rawAttachments = study.attachments || [];
+    if (rawAttachments.length === 0) { flash("Спочатку додайте заключення від центру"); return; }
 
     setReviewLoading(true);
     try {
+      const resolvedAttachments = [];
+      for (const att of rawAttachments) {
+        const data = await ensureAttachmentDataUrl(att);
+        if (data) resolvedAttachments.push({ ...att, data });
+      }
+      if (resolvedAttachments.length === 0) {
+        throw new Error("Не вдалося завантажити файли заключення");
+      }
       const rev = await reviewCenterConclusion({
         apiKey,
         model: aiModel,
         study,
         zoneName: ZONES[study.zone]?.ua || "",
-        attachments
+        attachments: resolvedAttachments
       });
       setConclusionReview(rev);
       setStudy(p => p ? ({ ...p, conclusionReview: rev }) : p);
@@ -1252,125 +1303,18 @@ export function AppProvider({ children }) {
 
   // ═══════════ PDF REPORT GENERATION ═══════════
 
-  const sevLabel = (s) => ({ normal: "Норма", mild: "Легкий", moderate: "Помірний", severe: "Тяжкий" }[s] || s);
-  const sevColor = (s) => ({ normal: "#22c55e", mild: "#eab308", moderate: "#f97316", severe: "#ef4444" }[s] || "#94a3b8");
-  const sevEmoji = (s) => ({ normal: "🟢", mild: "🟡", moderate: "🟠", severe: "🔴" }[s] || "⚪");
-
-  const generateReport = async (type) => {
+  const generateReport = async (type = "clinical") => {
     if (!study) return;
     flash("Генерація звіту...");
-    const f = study.findings || [];
-    const zone = ZONES[study.zone]?.ua || "";
-    const pn = study.patientName || "Невідомий";
-    const date = study.date || new Date().toLocaleDateString("uk-UA");
-
-    const sevCounts = { normal: 0, mild: 0, moderate: 0, severe: 0 };
-    f.forEach(x => { if (sevCounts[x.severity] !== undefined) sevCounts[x.severity]++; });
-    const maxSev = f.length === 0 ? "normal" : (sevCounts.severe > 0 ? "severe" : sevCounts.moderate > 0 ? "moderate" : sevCounts.mild > 0 ? "mild" : "normal");
-    const verdict = { normal: "Патології не виявлено", mild: "Незначні відхилення", moderate: "Помірні відхилення — потребує уваги", severe: "Значні відхилення — потребує лікування" }[maxSev];
-
-    let html = "";
-
-    if (type === "clinical") {
-      html = `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:700px;margin:0 auto;padding:32px;color:#1e293b">
-        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #0891b2;padding-bottom:16px;margin-bottom:24px">
-          <div><h1 style="font-size:22px;margin:0;color:#0891b2">MRI Insight</h1><p style="font-size:11px;color:#64748b;margin:2px 0 0">Звіт МРТ дослідження</p></div>
-          <div style="text-align:right"><p style="font-size:12px;color:#64748b;margin:0">Дата: ${date}</p></div>
-        </div>
-
-        <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
-          <tr><td style="padding:6px 12px;background:#f1f5f9;font-weight:600;width:160px;font-size:13px">Пацієнт</td><td style="padding:6px 12px;font-size:13px">${pn}</td></tr>
-          <tr><td style="padding:6px 12px;background:#f1f5f9;font-weight:600;font-size:13px">Зона дослідження</td><td style="padding:6px 12px;font-size:13px">${zone}</td></tr>
-          <tr><td style="padding:6px 12px;background:#f1f5f9;font-weight:600;font-size:13px">Послідовності</td><td style="padding:6px 12px;font-size:13px">${Object.entries(study.series || {}).filter(([_,a]) => a.length > 0).map(([s,a]) => s + " (" + a.length + " зр.)").join(", ") || "—"}</td></tr>
-          <tr><td style="padding:6px 12px;background:#f1f5f9;font-weight:600;font-size:13px">Кількість зрізів</td><td style="padding:6px 12px;font-size:13px">${totalCount()}</td></tr>
-        </table>
-
-        ${study.summary ? `<div style="background:#f0fdfa;border-left:4px solid #0891b2;padding:12px 16px;margin-bottom:16px;border-radius:0 8px 8px 0"><h3 style="font-size:14px;color:#0891b2;margin:0 0 6px">Висновок</h3><p style="font-size:13px;line-height:1.6;margin:0;color:#334155">${study.summary}</p></div>` : ""}
-
-        ${study.recommendation ? `<div style="background:#eff6ff;border-left:4px solid #3b82f6;padding:12px 16px;margin-bottom:16px;border-radius:0 8px 8px 0"><h3 style="font-size:14px;color:#3b82f6;margin:0 0 6px">Рекомендація</h3><p style="font-size:13px;line-height:1.6;margin:0;color:#334155">${study.recommendation}</p></div>` : ""}
-
-        ${f.length > 0 ? `<h3 style="font-size:15px;color:#1e293b;margin:20px 0 12px;border-bottom:1px solid #e2e8f0;padding-bottom:6px">Детальні знахідки (${f.length})</h3>
-        <table style="width:100%;border-collapse:collapse;font-size:12px">
-          <thead><tr style="background:#0891b2;color:#fff">
-            <th style="padding:8px;text-align:left;width:30px">№</th>
-            <th style="padding:8px;text-align:left">Структура</th>
-            <th style="padding:8px;text-align:left">Опис</th>
-            <th style="padding:8px;text-align:center;width:70px">Впевненість</th>
-            <th style="padding:8px;text-align:center;width:70px">Тяжкість</th>
-            <th style="padding:8px;text-align:center;width:50px">Зрізи</th>
-          </tr></thead>
-          <tbody>${f.map((x, i) => `<tr style="border-bottom:1px solid #e2e8f0;${i % 2 === 0 ? "background:#f8fafc" : ""}">
-            <td style="padding:6px 8px">${i + 1}</td>
-            <td style="padding:6px 8px;font-weight:600">${x.structure}</td>
-            <td style="padding:6px 8px;line-height:1.4">${x.description}</td>
-            <td style="padding:6px 8px;text-align:center"><span style="background:${confColor(x.confidence_level || 50).bg};color:${confColor(x.confidence_level || 50).c};padding:2px 6px;border-radius:4px;font-weight:700;font-size:11px">${x.confidence_level ?? "?"}%</span></td>
-            <td style="padding:6px 8px;text-align:center;color:${sevColor(x.severity)};font-weight:600">${sevLabel(x.severity)}</td>
-            <td style="padding:6px 8px;text-align:center">${x.slices || "—"}</td>
-          </tr>`).join("")}</tbody>
-        </table>` : `<div style="text-align:center;padding:24px;background:#f0fdf4;border-radius:8px;margin:16px 0"><p style="font-size:16px;color:#22c55e;font-weight:600">✓ Патології не виявлено</p></div>`}
-
-        ${f.some(x => x.pulse_sequence_hint) ? `<div style="background:#fffbeb;border-left:4px solid #f59e0b;padding:10px 14px;margin-top:16px;border-radius:0 8px 8px 0"><h4 style="font-size:13px;color:#f59e0b;margin:0 0 4px">Рекомендації щодо послідовностей</h4>${f.filter(x => x.pulse_sequence_hint).map(x => `<p style="font-size:12px;color:#92400e;margin:3px 0">• ${x.pulse_sequence_hint}</p>`).join("")}</div>` : ""}
-
-        <div style="margin-top:32px;padding-top:12px;border-top:1px solid #e2e8f0">
-          <p style="font-size:10px;color:#94a3b8;line-height:1.5">⚕ Цей звіт створено за допомогою ІІ-аналізу та має виключно допоміжний характер. Він не замінює повноцінну клінічну інтерпретацію фахівця. Остаточний діагноз повинен ставити кваліфікований лікар на підставі повної клінічної картини.</p>
-          <p style="font-size:9px;color:#cbd5e1;margin-top:6px">MRI Insight · ${date} · Згенеровано автоматично</p>
-        </div>
-      </div>`;
-    } else {
-      // TRAINER REPORT
-      const barMax = Math.max(...Object.values(sevCounts), 1);
-      html = `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:600px;margin:0 auto;padding:32px;color:#1e293b">
-        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #8b5cf6;padding-bottom:16px;margin-bottom:24px">
-          <div><h1 style="font-size:22px;margin:0;color:#8b5cf6">MRI Insight</h1><p style="font-size:11px;color:#64748b;margin:2px 0 0">Звіт для тренера</p></div>
-          <div style="text-align:right"><p style="font-size:12px;color:#64748b;margin:0">${date}</p></div>
-        </div>
-
-        <div style="display:flex;gap:16px;margin-bottom:24px">
-          <div style="flex:1"><p style="font-size:11px;color:#64748b;margin:0 0 2px">Спортсмен</p><p style="font-size:16px;font-weight:700;margin:0">${pn}</p></div>
-          <div><p style="font-size:11px;color:#64748b;margin:0 0 2px">Зона</p><p style="font-size:16px;font-weight:700;margin:0">${zone}</p></div>
-        </div>
-
-        <div style="background:${sevColor(maxSev)}15;border:2px solid ${sevColor(maxSev)};border-radius:12px;padding:20px;text-align:center;margin-bottom:24px">
-          <p style="font-size:36px;margin:0">${sevEmoji(maxSev)}</p>
-          <p style="font-size:20px;font-weight:700;color:${sevColor(maxSev)};margin:8px 0 4px">${verdict}</p>
-          <p style="font-size:13px;color:#64748b;margin:0">${f.length === 0 ? "Відхилень не знайдено" : `Знайдено ${f.length} знахідок`}</p>
-        </div>
-
-        ${f.length > 0 ? `<h3 style="font-size:14px;margin:0 0 12px">Розподіл за тяжкістю</h3>
-        <div style="margin-bottom:24px">
-          ${[["severe", "Тяжкі"], ["moderate", "Помірні"], ["mild", "Легкі"], ["normal", "Норма"]].map(([k, label]) =>
-            `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-              <span style="font-size:12px;width:70px;color:#64748b">${label}</span>
-              <div style="flex:1;height:20px;background:#f1f5f9;border-radius:4px;overflow:hidden">
-                <div style="width:${(sevCounts[k] / barMax) * 100}%;height:100%;background:${sevColor(k)};border-radius:4px;min-width:${sevCounts[k] > 0 ? '20px' : '0'}"></div>
-              </div>
-              <span style="font-size:13px;font-weight:700;width:24px;text-align:right">${sevCounts[k]}</span>
-            </div>`).join("")}
-        </div>` : ""}
-
-        ${study.summary ? `<div style="background:#f8fafc;border-radius:8px;padding:14px 16px;margin-bottom:16px"><h3 style="font-size:13px;color:#8b5cf6;margin:0 0 6px">Що показало МРТ</h3><p style="font-size:13px;line-height:1.6;margin:0;color:#475569">${study.summary}</p></div>` : ""}
-
-        ${f.length > 0 ? `<h3 style="font-size:14px;margin:0 0 10px">Основні знахідки</h3>
-        ${f.map(x => `<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;padding:10px 12px;background:#f8fafc;border-radius:8px;border-left:3px solid ${sevColor(x.severity)}">
-          <span style="font-size:16px">${sevEmoji(x.severity)}</span>
-          <div><p style="font-size:13px;font-weight:600;margin:0">${x.structure}</p><p style="font-size:12px;color:#64748b;margin:3px 0 0;line-height:1.4">${x.description}</p></div>
-        </div>`).join("")}` : ""}
-
-        ${study.recommendation ? `<div style="background:#f0fdfa;border-radius:8px;padding:14px 16px;margin-top:16px"><h3 style="font-size:13px;color:#0891b2;margin:0 0 6px">Рекомендація</h3><p style="font-size:13px;line-height:1.6;margin:0;color:#475569">${study.recommendation}</p></div>` : ""}
-
-        <div style="margin-top:32px;padding-top:12px;border-top:1px solid #e2e8f0">
-          <p style="font-size:10px;color:#94a3b8;line-height:1.5">⚕ Цей звіт створено ІІ-системою MRI Insight і має допоміжний характер. Рішення про повернення до тренувань приймає лікар.</p>
-          <p style="font-size:9px;color:#cbd5e1;margin-top:6px">MRI Insight · ${date}</p>
-        </div>
-      </div>`;
-    }
-
-    // Generate — open in new window (reliable, user can Save as PDF or Print)
-    const w = window.open("", "_blank");
-    if (w) {
-      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>МРТ Звіт — ${pn}</title><style>body{margin:0;padding:20px}@media print{body{padding:10px}}</style></head><body>${html}</body></html>`);
-      w.document.close();
-      flash("Звіт відкрито → Ctrl+P для збереження у PDF");
+    const opened = openPrintableReport({
+      study,
+      vnotes,
+      conclusionReview,
+      type,
+      totalSlices: totalCount()
+    });
+    if (opened) {
+      flash("Звіт відкрито → Ctrl+P або кнопка «Зберегти у PDF»");
     } else {
       flash("Дозвольте спливаючі вікна для цього сайту");
     }
@@ -1514,22 +1458,46 @@ export function AppProvider({ children }) {
   };
   const onViewerPanEnd = () => setPanning(null);
 
-  const onWindowStart = (side, e) => {
+  const onWindowStart = (side, e, activeSlice = null) => {
     e.preventDefault();
     const orig = side === "L" ? wlL : wlR;
-    setWindowing({ side, startX: e.clientX, startY: e.clientY, origB: orig.b, origC: orig.c });
+    const hasRaw = Boolean(activeSlice?.rawPixels && activeSlice.wc != null && activeSlice.ww != null);
+    const baseWc = orig.wc ?? activeSlice?.wc ?? 0;
+    const baseWw = orig.ww ?? activeSlice?.ww ?? 1;
+    const range = hasRaw && activeSlice.maxVal != null && activeSlice.minVal != null
+      ? Math.max(20, activeSlice.maxVal - activeSlice.minVal)
+      : Math.max(100, baseWw);
+    setWindowing({
+      side,
+      startX: e.clientX,
+      startY: e.clientY,
+      origB: orig.b,
+      origC: orig.c,
+      hasRaw,
+      origWc: baseWc,
+      origWw: baseWw,
+      range
+    });
   };
-  
+
   const onWindowMove = (e) => {
     if (!windowing) return;
     const deltaX = e.clientX - windowing.startX;
     const deltaY = e.clientY - windowing.startY;
-    const newB = Math.max(10, Math.min(400, windowing.origB - deltaY * 0.7));
-    const newC = Math.max(10, Math.min(400, windowing.origC + deltaX * 0.7));
-    if (windowing.side === "L") setWlL({ b: newB, c: newC });
-    else setWlR({ b: newB, c: newC });
+    const setter = windowing.side === "L" ? setWlL : setWlR;
+
+    if (windowing.hasRaw) {
+      const step = windowing.range / 350;
+      const newWc = windowing.origWc + deltaY * step;
+      const newWw = Math.max(4, windowing.origWw + deltaX * step * 1.4);
+      setter((prev) => ({ ...prev, wc: newWc, ww: newWw, preset: "custom" }));
+    } else {
+      const newB = Math.max(10, Math.min(400, windowing.origB - deltaY * 0.7));
+      const newC = Math.max(10, Math.min(400, windowing.origC + deltaX * 0.7));
+      setter((prev) => ({ ...prev, b: newB, c: newC }));
+    }
   };
-  
+
   const onWindowEnd = () => setWindowing(null);
 
 

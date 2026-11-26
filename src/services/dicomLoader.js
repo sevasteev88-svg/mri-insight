@@ -46,9 +46,22 @@ function rgbaBufferToJpegDataUrl(rgbaBuffer, cols, rows) {
   return sharedCanvas.toDataURL("image/jpeg", 0.9);
 }
 
+function finalizeParsedResult(res) {
+  if (!res?.ok) return { ok: false };
+  const dataUrl = rgbaBufferToJpegDataUrl(res.rgba, res.cols, res.rows);
+  let rawPixels = null;
+  if (res.rawBuffer) {
+    rawPixels = res.rawType === "float32"
+      ? new Float32Array(res.rawBuffer)
+      : new Int16Array(res.rawBuffer);
+  }
+  const { rawBuffer: _rawBuf, rgba: _rgbaBuf, ...rest } = res;
+  return { ...rest, dataUrl, rawPixels };
+}
+
 /**
  * Parse a DICOM File in a lazy-loaded Web Worker (with lazy dynamic-import fallback).
- * Returns { ok, dataUrl, meta, detectedSeq, detectedPlane, ps, instanceNumber, sliceLocation, imagePositionPatient, imageOrientationPatient, rows, cols }
+ * Returns { ok, dataUrl, rawPixels, wc, ww, minVal, maxVal, isMonochrome1, meta, detectedSeq, detectedPlane, ps, instanceNumber, sliceLocation, imagePositionPatient, imageOrientationPatient, rows, cols }
  */
 export async function parseDicomFileInWorker(file, isPatient = true) {
   const buffer = await file.arrayBuffer();
@@ -63,8 +76,7 @@ export async function parseDicomFileInWorker(file, isPatient = true) {
       });
 
       if (!res?.ok) return { ok: false };
-      const dataUrl = rgbaBufferToJpegDataUrl(res.rgba, res.cols, res.rows);
-      return { ...res, dataUrl };
+      return finalizeParsedResult(res);
     } catch {
       // Fall through to lazy main-thread fallback with a fresh buffer
     }
@@ -74,7 +86,5 @@ export async function parseDicomFileInWorker(file, isPatient = true) {
   const fallbackBuffer = buffer.byteLength > 0 ? buffer : await file.arrayBuffer();
   const { parseDicomBuffer } = await import("../workers/dicom.worker.js");
   const res = parseDicomBuffer(fallbackBuffer, isPatient);
-  if (!res?.ok) return { ok: false };
-  const dataUrl = rgbaBufferToJpegDataUrl(res.rgba, res.cols, res.rows);
-  return { ...res, dataUrl };
+  return finalizeParsedResult(res);
 }

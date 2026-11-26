@@ -2,7 +2,56 @@ import daikon from "daikon";
 import { extractDicomMetadata } from "../utils/dicomMeta.js";
 
 /**
- * Extract DICOM metadata, spatial parameters, and render grayscale pixels into RGBA buffer.
+ * Fast 2nd-98th percentile histogram window estimation when DICOM WC/WW tags are absent.
+ */
+function computePercentileWindow(rawData, min, max) {
+  const span = max - min;
+  if (!(span > 0)) return { wc: min, ww: 1 };
+
+  const bins = 256;
+  const hist = new Uint32Array(bins);
+  const scale = (bins - 1) / span;
+  const len = rawData.length;
+
+  for (let i = 0; i < len; i++) {
+    let b = Math.floor((rawData[i] - min) * scale);
+    if (b < 0) b = 0;
+    else if (b >= bins) b = bins - 1;
+    hist[b]++;
+  }
+
+  const lowTarget = Math.floor(len * 0.02);
+  const highTarget = Math.ceil(len * 0.98);
+  let acc = 0;
+  let lowBin = 0;
+  let highBin = bins - 1;
+
+  for (let b = 0; b < bins; b++) {
+    acc += hist[b];
+    if (acc >= lowTarget) {
+      lowBin = b;
+      break;
+    }
+  }
+
+  acc = 0;
+  for (let b = 0; b < bins; b++) {
+    acc += hist[b];
+    if (acc >= highTarget) {
+      highBin = b;
+      break;
+    }
+  }
+
+  const lowVal = min + (lowBin / (bins - 1)) * span;
+  const highVal = min + (highBin / (bins - 1)) * span;
+  const ww = Math.max(1, highVal - lowVal);
+  const wc = (lowVal + highVal) / 2;
+  return { wc, ww };
+}
+
+/**
+ * Extract DICOM metadata, spatial parameters, raw 16-bit pixels, and 8-bit preview RGBA.
  */
 export function parseDicomBuffer(buffer, isPatient = true) {
   const data = new DataView(buffer);
@@ -92,42 +141,79 @@ export function parseDicomBuffer(buffer, isPatient = true) {
     }
   }
 
+  const piTag = image.getTag(0x0028, 0x0004);
+  const piVal = piTag && piTag.value && piTag.value[0] ? String(piTag.value[0]).trim().toUpperCase() : "";
+  const isMonochrome1 = piVal === "MONOCHROME1";
+
   const rawData = image.getInterpretedData();
   let rgba = null;
-  if (rawData && cols > 0 && rows > 0) {
-    let min = Infinity, max = -Infinity;
-    for (let i = 0; i < rawData.length; i++) {
-      if (rawData[i] < min) min = rawData[i];
-      if (rawData[i] > max) max = rawData[i];
-    }
+  let rawBuffer = null;
+  let rawType = null;
+  let wc = null;
+  let ww = null;
+  let minVal = null;
+  let maxVal = null;
 
-    let wc = image.getWindowCenter();
-    let ww = image.getWindowWidth();
+  if (rawData && cols > 0 && rows > 0) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i = 0; i < rawData.length; i++) {
+      const v = rawData[i];
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    minVal = min;
+    maxVal = max;
+
+    wc = image.getWindowCenter();
+    ww = image.getWindowWidth();
     if (Array.isArray(wc)) wc = wc[0];
     if (Array.isArray(ww)) ww = ww[0];
+    wc = typeof wc === "number" && !Number.isNaN(wc) ? wc : parseFloat(wc);
+    ww = typeof ww === "number" && !Number.isNaN(ww) ? ww : parseFloat(ww);
 
-    if (!wc || !ww) {
+    if (!Number.isFinite(wc) || !Number.isFinite(ww) || ww <= 0) {
+      const est = computePercentileWindow(rawData, min, max);
+      wc = est.wc;
+      ww = est.ww;
+    }
+    if (!Number.isFinite(wc) || !Number.isFinite(ww) || ww <= 0) {
       wc = (max + min) / 2;
       ww = (max - min) || 1;
     }
 
+    const useInt16 = min >= -32768 && max <= 32767;
+    const rawTyped = useInt16 ? new Int16Array(rawData.length) : new Float32Array(rawData.length);
+    rawType = useInt16 ? "int16" : "float32";
+
     const minP = wc - ww / 2;
     rgba = new Uint8ClampedArray(cols * rows * 4);
     for (let i = 0; i < rawData.length; i++) {
-      let n = ((rawData[i] - minP) / ww) * 255;
+      const val = rawData[i];
+      rawTyped[i] = val;
+      let n = ((val - minP) / ww) * 255;
       if (n < 0) n = 0;
       else if (n > 255) n = 255;
+      if (isMonochrome1) n = 255 - n;
       const idx = i * 4;
       rgba[idx] = n;
       rgba[idx + 1] = n;
       rgba[idx + 2] = n;
       rgba[idx + 3] = 255;
     }
+    rawBuffer = rawTyped.buffer;
   }
 
   return {
     ok: true,
     rgba: rgba ? rgba.buffer : null,
+    rawBuffer,
+    rawType,
+    wc,
+    ww,
+    minVal,
+    maxVal,
+    isMonochrome1,
     cols,
     rows,
     meta,
@@ -145,11 +231,10 @@ if (typeof self !== "undefined" && typeof WorkerGlobalScope !== "undefined" && s
   self.onmessage = ({ data: { id, buffer, isPatient } }) => {
     try {
       const res = parseDicomBuffer(buffer, isPatient);
-      if (res.ok && res.rgba) {
-        self.postMessage({ id, ...res }, [res.rgba]);
-      } else {
-        self.postMessage({ id, ...res });
-      }
+      const transfers = [];
+      if (res.ok && res.rgba) transfers.push(res.rgba);
+      if (res.ok && res.rawBuffer) transfers.push(res.rawBuffer);
+      self.postMessage({ id, ...res }, transfers);
     } catch (e) {
       self.postMessage({ id, ok: false, error: e?.message || String(e) });
     }

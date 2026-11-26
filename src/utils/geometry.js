@@ -245,3 +245,90 @@ export function calculateLocalizerLine(
 
   return null;
 }
+
+/**
+ * Maps a normalized 2D image point (u, v in [0, 1]) on a DICOM slice into 3D patient coordinates [Px, Py, Pz].
+ */
+export function slicePointToPatient3D(slice, u, v) {
+  if (!slice) return null;
+  const ipp = slice.imagePositionPatient;
+  const iop = slice.imageOrientationPatient;
+  if (!ipp || ipp.length < 3 || !iop || iop.length < 6) return null;
+
+  const cols = slice.cols || 512;
+  const rows = slice.rows || 512;
+  const dx = slice.ps && slice.ps.length >= 2 ? slice.ps[1] : (slice.ps?.[0] ?? 1.0);
+  const dy = slice.ps && slice.ps.length >= 1 ? slice.ps[0] : 1.0;
+
+  const c = u * cols;
+  const r = v * rows;
+
+  const rx = iop[0], ry = iop[1], rz = iop[2];
+  const cx = iop[3], cy = iop[4], cz = iop[5];
+
+  return [
+    ipp[0] + c * dx * rx + r * dy * cx,
+    ipp[1] + c * dx * ry + r * dy * cy,
+    ipp[2] + c * dx * rz + r * dy * cz
+  ];
+}
+
+/**
+ * Finds the index of the slice in `seriesSlices` whose plane is closest in 3D space to `point3D`.
+ */
+export function findClosestSliceForPoint3D(seriesSlices, point3D) {
+  if (!Array.isArray(seriesSlices) || seriesSlices.length === 0 || !point3D) return null;
+
+  let bestIndex = -1;
+  let bestDist = Infinity;
+
+  for (let i = 0; i < seriesSlices.length; i++) {
+    const s = seriesSlices[i];
+    const ipp = s?.imagePositionPatient;
+    const iop = s?.imageOrientationPatient;
+    if (!ipp || ipp.length < 3 || !iop || iop.length < 6) continue;
+
+    const rowCos = [iop[0], iop[1], iop[2]];
+    const colCos = [iop[3], iop[4], iop[5]];
+    const normal = normalize(cross(rowCos, colCos));
+    if (norm(normal) < 1e-6) continue;
+
+    const dist = Math.abs(dot(sub(point3D, ipp), normal));
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIndex = i;
+    }
+  }
+
+  if (bestIndex === -1) return null;
+  return { index: bestIndex, distanceMm: bestDist };
+}
+
+/**
+ * Projects a 3D patient coordinate [Px, Py, Pz] onto normalized (u, v) coordinates on `slice`.
+ */
+export function projectPatient3DToSlice(slice, point3D) {
+  if (!slice || !point3D) return null;
+  const ipp = slice.imagePositionPatient;
+  const iop = slice.imageOrientationPatient;
+  if (!ipp || ipp.length < 3 || !iop || iop.length < 6) return null;
+
+  const cols = slice.cols || 512;
+  const rows = slice.rows || 512;
+  const dx = slice.ps && slice.ps.length >= 2 ? slice.ps[1] : (slice.ps?.[0] ?? 1.0);
+  const dy = slice.ps && slice.ps.length >= 1 ? slice.ps[0] : 1.0;
+  if (dx <= 0 || dy <= 0) return null;
+
+  const rowCos = [iop[0], iop[1], iop[2]];
+  const colCos = [iop[3], iop[4], iop[5]];
+  const rel = sub(point3D, ipp);
+
+  const c = dot(rel, rowCos) / dx;
+  const r = dot(rel, colCos) / dy;
+
+  const u = c / cols;
+  const v = r / rows;
+  const inBounds = u >= -0.05 && u <= 1.05 && v >= -0.05 && v <= 1.05;
+
+  return { u, v, inBounds };
+}

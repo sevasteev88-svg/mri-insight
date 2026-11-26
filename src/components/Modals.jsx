@@ -201,6 +201,7 @@ export function SettingsModal() {
 export function ImageViewModal() {
   const { viewImg, setViewImg, setRefs } = React.useContext(AppContext);
   if (!viewImg) return null;
+  const imgSrc = viewImg.data || viewImg.url || "";
 
   return (
     <div style={P.ov} onClick={() => setViewImg(null)}>
@@ -226,13 +227,17 @@ export function ImageViewModal() {
           <span style={{ fontSize: 13, fontWeight: 600, color: "#f1f5f9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60vw" }}>
             {viewImg.name || "Перегляд зображення"}
           </span>
-          {viewImg.data && viewImg.data.startsWith("data:") && (
+          {imgSrc && (
             <button 
               type="button"
               onClick={() => {
-                const w = window.open("");
-                if (w) {
-                  w.document.write(`<title>${viewImg.name || "Зображення"}</title><body style="margin:0;background:#0c0e12;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${viewImg.data}" style="max-width:100%;max-height:100vh;object-fit:contain" /></body>`);
+                if (imgSrc.startsWith("http")) {
+                  window.open(imgSrc, "_blank");
+                } else {
+                  const w = window.open("");
+                  if (w) {
+                    w.document.write(`<title>${viewImg.name || "Зображення"}</title><body style="margin:0;background:#0c0e12;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${imgSrc}" style="max-width:100%;max-height:100vh;object-fit:contain" /></body>`);
+                  }
                 }
               }}
               style={{
@@ -255,9 +260,9 @@ export function ImageViewModal() {
         </div>
 
         <div style={{ flex: 1, overflow: "auto", display: "flex", alignItems: "center", justifyContent: "center", background: "#090b0e", borderRadius: 8, padding: 8, minWidth: 280, minHeight: 200, maxHeight: "72vh", width: "100%" }}>
-          {viewImg.data && viewImg.data.startsWith("data:") ? (
+          {imgSrc ? (
             <img 
-              src={viewImg.data} 
+              src={imgSrc} 
               alt={viewImg.name || ""} 
               style={{ maxWidth: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: 4, display: "block" }} 
             />

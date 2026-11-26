@@ -3,16 +3,22 @@ import { AppContext } from "../context/AppContext.jsx";
 import { P } from "../styles/styles.js";
 import { ZONES, parseSeriesKey } from "../constants/anatomy.js";
 import { collectZoneMaterials } from "../utils/helpers.js";
-import { calculateLocalizerLine } from "../utils/geometry.js";
+import {
+  calculateLocalizerLine,
+  slicePointToPatient3D,
+  findClosestSliceForPoint3D,
+  projectPatient3DToSlice
+} from "../utils/geometry.js";
 import {
   ArrowLeft, Search, FileText, Crosshair, Star, ChevronLeft, ChevronRight,
   Mic, MicOff, Trash2, Link, Ruler, TriangleRight, Circle, Sun, Brain,
   AlertCircle, Eye, X, BookOpen, Calendar, Layers, PanelLeft, Columns,
-  Maximize2, Play, Pause, RotateCcw, MessageSquare
+  Maximize2, Play, Pause, RotateCcw, MessageSquare, LocateFixed, Contrast
 } from "lucide-react";
 import { dbGet } from "../services/db.js";
 import { scanSeriesSlices } from "../services/gemini.js";
 import StudyChat from "./StudyChat.jsx";
+import DicomCanvas, { WL_PRESETS, computePresetWl } from "./DicomCanvas.jsx";
 
 export default function SplitScreen() {
   const context = React.useContext(AppContext);
@@ -50,6 +56,8 @@ export default function SplitScreen() {
   const [compareStudyId, setCompareStudyId] = useState(null);
   const [compareStudyData, setCompareStudyData] = useState(null);
   const [loadingCompareStudy, setLoadingCompareStudy] = useState(false);
+  const [crosshair3D, setCrosshair3D] = useState(null);
+  const [crosshairDragSide, setCrosshairDragSide] = useState(null);
 
   const im = curImgs();
   const noteKey = `${seriesKey()}-${splitIdx}`;
@@ -180,6 +188,51 @@ export default function SplitScreen() {
     ? calculateLocalizerLine(leftSlice, rightSlice, leftPlane, rightPlane, compareIdx, compImgs.length, im, compImgs)
     : null;
 
+  const crosshairOnLeft = crosshair3D && leftSlice ? projectPatient3DToSlice(leftSlice, crosshair3D) : null;
+  const crosshairOnRight = crosshair3D && rightMode === "compare" && rightSlice ? projectPatient3DToSlice(rightSlice, crosshair3D) : null;
+
+  const updateCrosshairFromClick = (side, e, isDrag = false) => {
+    const activeSlice = side === "L" ? im[splitIdx] : compImgs[compareIdx];
+    if (!activeSlice) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const u = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const v = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const pt3D = slicePointToPatient3D(activeSlice, u, v);
+    if (!pt3D) {
+      if (!isDrag) flash("Для 3D-перехрестя потрібні DICOM-координати (IPP/IOP)");
+      return;
+    }
+    setCrosshair3D(pt3D);
+    if (side === "L" && rightMode === "compare" && compImgs.length > 0) {
+      const best = findClosestSliceForPoint3D(compImgs, pt3D);
+      if (best) setCompareIdx(best.index);
+    } else if (side === "R" && im.length > 0) {
+      const best = findClosestSliceForPoint3D(im, pt3D);
+      if (best) setSplitIdx(best.index);
+    }
+  };
+
+  const activateCrosshairTool = () => {
+    setToolMode("crosshair");
+    setRoi(null);
+    setRoiResult(null);
+    if (rightMode !== "compare") {
+      const allKeys = Object.keys(study?.series || {});
+      if (allKeys.length >= 2) {
+        setRightMode("compare");
+        if (!compareSeriesKey || compareSeriesKey === curSeriesKeyVal) {
+          const ortho = allKeys.find((k) => {
+            const p = parseSeriesKey(k, study?.zone).plane;
+            return k !== curSeriesKeyVal && p !== study?.activePlane;
+          }) || allKeys.find((k) => k !== curSeriesKeyVal) || allKeys[0];
+          setCompareSeriesKey(ortho);
+          setCompareIdx(0);
+        }
+      }
+    }
+  };
+
   const navRef = (dir) => setRefIdx((p) => Math.max(0, Math.min(refImgs.length - 1, p + dir)));
 
   // Key Frames (★) toggle for current slice
@@ -257,6 +310,9 @@ export default function SplitScreen() {
         setToolMode("window");
         setRoi(null);
         setRoiResult(null);
+      } else if (code === "KeyC" || key === "c" || key === "C" || key === "с" || key === "С") {
+        e.preventDefault();
+        activateCrosshairTool();
       } else if (code === "KeyS" || key === "s" || key === "S" || key === "і" || key === "І" || key === "ы" || key === "Ы") {
         e.preventDefault();
         toggleKeyImage();
@@ -271,6 +327,7 @@ export default function SplitScreen() {
         setActiveMeasure(null);
         setActiveArea(null);
         setActiveAngle([]);
+        setCrosshair3D(null);
       }
     };
 
@@ -304,6 +361,8 @@ export default function SplitScreen() {
     setRoi(null);
     setRoiResult(null);
     resetZoom("L");
+    setWlL((prev) => ({ ...prev, b: 100, c: 100, wc: null, ww: null, preset: "auto" }));
+    setCrosshair3D(null);
     setAiMarkers({});
   };
 
@@ -321,8 +380,8 @@ export default function SplitScreen() {
         fontFamily: "'IBM Plex Sans',sans-serif"
       }}
       onMouseMove={(e) => { onViewerPanMove(e); onWindowMove(e); }}
-      onMouseUp={() => { onViewerPanEnd(); onWindowEnd(); }}
-      onMouseLeave={() => { onViewerPanEnd(); onWindowEnd(); }}
+      onMouseUp={() => { onViewerPanEnd(); onWindowEnd(); setCrosshairDragSide(null); }}
+      onMouseLeave={() => { onViewerPanEnd(); onWindowEnd(); setCrosshairDragSide(null); }}
     >
       {/* COMPACT WORKSTATION HEADER */}
       <div
@@ -409,9 +468,66 @@ export default function SplitScreen() {
             <Sun size={13} />
           </button>
 
-          {(wlL.b !== 100 || wlL.c !== 100) && (
+          <button
+            onClick={activateCrosshairTool}
+            style={{ ...P.sm, padding: "5px 9px", background: toolMode === "crosshair" ? "rgba(34,211,238,.2)" : "transparent", color: toolMode === "crosshair" ? "#22d3ee" : "#8b919c", border: "none" }}
+            title="3D Перехрестя по площинах (C або Shift+клік)"
+          >
+            <LocateFixed size={13} />
+          </button>
+
+          {crosshair3D && (
             <button
-              onClick={() => setWlL({ b: 100, c: 100 })}
+              onClick={() => setCrosshair3D(null)}
+              style={{ ...P.sm, padding: "4px 6px", fontSize: 10, color: "#22d3ee", background: "rgba(34,211,238,.12)", border: "none" }}
+              title="Прибрати 3D-перехрестя (Esc)"
+            >
+              ✕ 3D
+            </button>
+          )}
+
+          <select
+            value={wlL.preset || "auto"}
+            onChange={(e) => {
+              const presetId = e.target.value;
+              const vals = computePresetWl(im[splitIdx], presetId);
+              setWlL((prev) => ({
+                ...prev,
+                preset: presetId,
+                wc: vals ? vals.wc : null,
+                ww: vals ? vals.ww : null,
+                b: 100,
+                c: 100
+              }));
+            }}
+            style={{
+              background: "#11141a",
+              border: "0.5px solid rgba(255,255,255,.1)",
+              borderRadius: 5,
+              color: "#cbd5e1",
+              fontSize: 10,
+              padding: "4px 6px",
+              outline: "none",
+              cursor: "pointer"
+            }}
+            title="Тканинний пресет контрасту W/L"
+          >
+            {WL_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </select>
+
+          <button
+            onClick={() => setWlL((prev) => ({ ...prev, invert: !prev.invert }))}
+            style={{ ...P.sm, padding: "5px 8px", background: wlL.invert ? "rgba(255,255,255,.16)" : "transparent", color: wlL.invert ? "#f8fafc" : "#8b919c", border: "none" }}
+            title="Інверсія кольору"
+          >
+            <Contrast size={13} />
+          </button>
+
+          {(wlL.b !== 100 || wlL.c !== 100 || wlL.wc !== null || wlL.ww !== null || wlL.invert) && (
+            <button
+              onClick={() => setWlL({ b: 100, c: 100, wc: null, ww: null, invert: false, preset: "auto" })}
               style={{ ...P.sm, padding: "4px 7px", fontSize: 10, color: "#e0a93b", background: "rgba(224,169,59,.12)", border: "none" }}
               title="Скинути W/L лівої панелі"
             >
@@ -659,17 +775,26 @@ export default function SplitScreen() {
               <div
                 ref={roiImgRef}
                 onMouseDown={(e) => {
-                  if (e.button === 2) { onWindowStart("L", e); return; }
-                  if (zoomL.scale > 1) onViewerPanStart("L", e);
-                  else {
-                    if (toolMode.startsWith("measure") || toolMode === "roi") toolMouseDown(e);
-                    else onWindowStart("L", e);
+                  if (e.button === 2) { onWindowStart("L", e, im[splitIdx]); return; }
+                  if (zoomL.scale > 1) { onViewerPanStart("L", e); return; }
+                  if (toolMode === "crosshair" || e.shiftKey) {
+                    e.preventDefault();
+                    setCrosshairDragSide("L");
+                    updateCrosshairFromClick("L", e, false);
+                    return;
                   }
+                  if (toolMode.startsWith("measure") || toolMode === "roi") toolMouseDown(e);
+                  else onWindowStart("L", e, im[splitIdx]);
                 }}
                 onMouseMove={(e) => {
+                  if (crosshairDragSide === "L") {
+                    updateCrosshairFromClick("L", e, true);
+                    return;
+                  }
                   if (zoomL.scale <= 1 && (toolMode.startsWith("measure") || toolMode === "roi")) toolMouseMove(e);
                 }}
                 onMouseUp={() => {
+                  if (crosshairDragSide === "L") { setCrosshairDragSide(null); return; }
                   if (zoomL.scale <= 1 && (toolMode.startsWith("measure") || toolMode === "roi")) toolMouseUp();
                 }}
                 style={{
@@ -685,19 +810,7 @@ export default function SplitScreen() {
                 }}
               >
                 {im[splitIdx] ? (
-                  <img
-                    src={im[splitIdx].data}
-                    alt=""
-                    draggable={false}
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "contain",
-                      borderRadius: 4,
-                      pointerEvents: "none",
-                      filter: `brightness(${wlL.b}%) contrast(${wlL.c}%)`
-                    }}
-                  />
+                  <DicomCanvas slice={im[splitIdx]} wl={wlL} />
                 ) : (
                   <span style={{ color: "#3a3f47", fontSize: 12 }}>Немає зрізів у серії</span>
                 )}
@@ -719,9 +832,16 @@ export default function SplitScreen() {
                   />
                 )}
 
-                {/* Zoom-aware Localizer & Measurements SVG Layer */}
-                {(measurements.length > 0 || activeMeasure || activeArea || activeAngle.length > 0 || localizerOnLeft) && (
+                {/* Zoom-aware Localizer, Crosshair & Measurements SVG Layer */}
+                {(measurements.length > 0 || activeMeasure || activeArea || activeAngle.length > 0 || localizerOnLeft || crosshairOnLeft?.inBounds) && (
                   <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 10 }}>
+                    {crosshairOnLeft?.inBounds && (
+                      <g>
+                        <line x1={crosshairOnLeft.u * 1000} y1={0} x2={crosshairOnLeft.u * 1000} y2={1000} stroke="#22d3ee" strokeWidth="1.2" vectorEffect="non-scaling-stroke" strokeDasharray="6 4" opacity="0.85" />
+                        <line x1={0} y1={crosshairOnLeft.v * 1000} x2={1000} y2={crosshairOnLeft.v * 1000} stroke="#22d3ee" strokeWidth="1.2" vectorEffect="non-scaling-stroke" strokeDasharray="6 4" opacity="0.85" />
+                        <circle cx={crosshairOnLeft.u * 1000} cy={crosshairOnLeft.v * 1000} r="10" fill="none" stroke="#22d3ee" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                      </g>
+                    )}
                     {localizerOnLeft && (
                       <g>
                         <line
@@ -999,7 +1119,9 @@ export default function SplitScreen() {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   {zoomR.scale > 1 && <button onClick={() => resetZoom("R")} style={{ ...P.sm, padding: "2px 6px", fontSize: 9, color: "#4aa3df" }}>{zoomR.scale.toFixed(1)}× ✕</button>}
-                  {(wlR.b !== 100 || wlR.c !== 100) && <button onClick={() => setWlR({ b: 100, c: 100 })} style={{ ...P.sm, padding: "2px 6px", fontSize: 9, color: "#e0a93b" }}>W/L</button>}
+                  {(wlR.b !== 100 || wlR.c !== 100 || wlR.wc !== null || wlR.ww !== null || wlR.invert) && (
+                    <button onClick={() => setWlR({ b: 100, c: 100, wc: null, ww: null, invert: false, preset: "auto" })} style={{ ...P.sm, padding: "2px 6px", fontSize: 9, color: "#e0a93b" }}>W/L</button>
+                  )}
                   {rightMode === "compare" && (
                     <button onClick={() => setSyncScroll(!syncScroll)} style={{ ...P.sm, padding: "4px 8px", background: syncScroll ? "rgba(74,163,223,.18)" : "transparent", color: syncScroll ? "#4aa3df" : "#8b919c", border: "none" }} title="Синхронізувати прокрутку">
                       <Link size={12} />
@@ -1169,9 +1291,23 @@ export default function SplitScreen() {
 
                   <div
                     onWheel={(e) => onViewerWheel("R", e, navCompare)}
-                    style={{ flex: 1, background: "#06080b", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomR.scale > 1 ? (panning ? "grabbing" : "grab") : "default", userSelect: "none" }}
+                    style={{ flex: 1, background: "#06080b", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", cursor: zoomR.scale > 1 ? (panning ? "grabbing" : "grab") : toolMode === "crosshair" ? "crosshair" : "default", userSelect: "none" }}
                     onContextMenu={(e) => e.preventDefault()}
-                    onMouseDown={(e) => { if (e.button === 2) { onWindowStart("R", e); return; } if (zoomR.scale > 1) onViewerPanStart("R", e); }}
+                    onMouseDown={(e) => {
+                      if (e.button === 2) { onWindowStart("R", e, compImgs[compareIdx]); return; }
+                      if (zoomR.scale > 1) { onViewerPanStart("R", e); return; }
+                      if (toolMode === "crosshair" || e.shiftKey) {
+                        e.preventDefault();
+                        setCrosshairDragSide("R");
+                        updateCrosshairFromClick("R", e, false);
+                      }
+                    }}
+                    onMouseMove={(e) => {
+                      if (crosshairDragSide === "R") updateCrosshairFromClick("R", e, true);
+                    }}
+                    onMouseUp={() => {
+                      if (crosshairDragSide === "R") setCrosshairDragSide(null);
+                    }}
                   >
                     {compImgs[compareIdx] ? (
                       <>
@@ -1188,42 +1324,46 @@ export default function SplitScreen() {
                             transition: panning ? "none" : "transform .1s"
                           }}
                         >
-                          <img
-                            src={compImgs[compareIdx].data}
-                            alt=""
-                            draggable={false}
-                            style={{ width: "100%", height: "100%", objectFit: "contain", borderRadius: 4, pointerEvents: "none", filter: `brightness(${wlR.b}%) contrast(${wlR.c}%)` }}
-                          />
-                          {localizerOnRight && (
+                          <DicomCanvas slice={compImgs[compareIdx]} wl={wlR} />
+                          {(localizerOnRight || crosshairOnRight?.inBounds) && (
                             <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 10 }}>
-                              <g>
-                                <line
-                                  x1={localizerOnRight.x1 * 1000}
-                                  y1={localizerOnRight.y1 * 1000}
-                                  x2={localizerOnRight.x2 * 1000}
-                                  y2={localizerOnRight.y2 * 1000}
-                                  stroke="#facc15"
-                                  strokeWidth="1.8"
-                                  vectorEffect="non-scaling-stroke"
-                                  strokeDasharray="8 4"
-                                  style={{ filter: "drop-shadow(0px 0px 3px rgba(0,0,0,0.9))" }}
-                                />
-                                <circle cx={localizerOnRight.x1 * 1000} cy={localizerOnRight.y1 * 1000} r="3" fill="#facc15" />
-                                <circle cx={localizerOnRight.x2 * 1000} cy={localizerOnRight.y2 * 1000} r="3" fill="#facc15" />
-                                <text
-                                  x={((localizerOnRight.x1 + localizerOnRight.x2) / 2) * 1000}
-                                  y={((localizerOnRight.y1 + localizerOnRight.y2) / 2) * 1000}
-                                  fill="#facc15"
-                                  fontSize="20"
-                                  fontWeight="700"
-                                  fontFamily="'JetBrains Mono',monospace"
-                                  style={{ textShadow: "1px 1px 3px #000, -1px -1px 3px #000" }}
-                                  dx="6"
-                                  dy="-6"
-                                >
-                                  {leftPlane ? `${leftPlane.slice(0, 3)}: ${splitIdx + 1}` : `${splitIdx + 1}`}
-                                </text>
-                              </g>
+                              {crosshairOnRight?.inBounds && (
+                                <g>
+                                  <line x1={crosshairOnRight.u * 1000} y1={0} x2={crosshairOnRight.u * 1000} y2={1000} stroke="#22d3ee" strokeWidth="1.2" vectorEffect="non-scaling-stroke" strokeDasharray="6 4" opacity="0.85" />
+                                  <line x1={0} y1={crosshairOnRight.v * 1000} x2={1000} y2={crosshairOnRight.v * 1000} stroke="#22d3ee" strokeWidth="1.2" vectorEffect="non-scaling-stroke" strokeDasharray="6 4" opacity="0.85" />
+                                  <circle cx={crosshairOnRight.u * 1000} cy={crosshairOnRight.v * 1000} r="10" fill="none" stroke="#22d3ee" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                                </g>
+                              )}
+                              {localizerOnRight && (
+                                <g>
+                                  <line
+                                    x1={localizerOnRight.x1 * 1000}
+                                    y1={localizerOnRight.y1 * 1000}
+                                    x2={localizerOnRight.x2 * 1000}
+                                    y2={localizerOnRight.y2 * 1000}
+                                    stroke="#facc15"
+                                    strokeWidth="1.8"
+                                    vectorEffect="non-scaling-stroke"
+                                    strokeDasharray="8 4"
+                                    style={{ filter: "drop-shadow(0px 0px 3px rgba(0,0,0,0.9))" }}
+                                  />
+                                  <circle cx={localizerOnRight.x1 * 1000} cy={localizerOnRight.y1 * 1000} r="3" fill="#facc15" />
+                                  <circle cx={localizerOnRight.x2 * 1000} cy={localizerOnRight.y2 * 1000} r="3" fill="#facc15" />
+                                  <text
+                                    x={((localizerOnRight.x1 + localizerOnRight.x2) / 2) * 1000}
+                                    y={((localizerOnRight.y1 + localizerOnRight.y2) / 2) * 1000}
+                                    fill="#facc15"
+                                    fontSize="20"
+                                    fontWeight="700"
+                                    fontFamily="'JetBrains Mono',monospace"
+                                    style={{ textShadow: "1px 1px 3px #000, -1px -1px 3px #000" }}
+                                    dx="6"
+                                    dy="-6"
+                                  >
+                                    {leftPlane ? `${leftPlane.slice(0, 3)}: ${splitIdx + 1}` : `${splitIdx + 1}`}
+                                  </text>
+                                </g>
+                              )}
                             </svg>
                           )}
                         </div>
