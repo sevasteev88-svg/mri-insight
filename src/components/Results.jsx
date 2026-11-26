@@ -4,22 +4,26 @@ import { P } from "../styles/styles.js";
 import { 
   ArrowLeft, CheckCircle, BookOpen, Columns, FileText, 
   Save, Star, Eye, Trash2, Info, ExternalLink, Paperclip, 
-  Upload, Brain, Mic, Shield, Archive, X, ScanText 
+  Upload, Brain, Mic, Shield, Archive, X, ScanText,
+  MessageSquare, ChevronDown, ChevronUp
 } from "lucide-react";
 import { ZONES } from "../constants/anatomy.js";
 import { confColor, radioUrl } from "../utils/helpers.js";
 import { dbPut } from "../services/db.js";
 import { supabase } from "../services/supabase.js";
+import StudyChat from "./StudyChat.jsx";
 
 export default function Results() {
   const {
     study, setStudy, setScr, totalCount, setStudies, flash,
     refs, setShowRefP, goSplit, generateReport, vnotes, setVnotes,
     goToSlice, attachIn, reviewConclusion, reviewLoading, setViewImg,
-    handleAttachment, recording, stopVoice, startVoice, recRef, setRecording,
+    handleAttachment, recording, transcribing, stopVoice, startVoice,
     setShowReport, setReportText, conclusionReview, confirmConclusion,
     archiveStudy, deleteStudy, extractConclusionText, ocrLoading, askConfirm
   } = React.useContext(AppContext);
+
+  const [showChat, setShowChat] = React.useState(false);
 
   const f = study?.findings || [];
   const zr = refs[study?.zone] || [];
@@ -446,26 +450,13 @@ export default function Results() {
             <FileText size={15} /> Клінічна картка · Замітки та висновок лікаря
           </h3>
           <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={() => {
-              if (recording === "doctorNotes") stopVoice();
-              else {
-                const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (!SR) { flash("Голосовий ввід не підтримується у цьому браузері"); return; }
-                const r = new SR(); r.lang = "uk-UA"; r.continuous = true; r.interimResults = false;
-                r.onresult = e => { 
-                  const t = Array.from(e.results).map(x => x[0].transcript).join(" "); 
-                  setStudy(p => {
-                    const updated = { ...p, doctorNotes: (p.doctorNotes ? p.doctorNotes + " " : "") + t };
-                    dbPut("studies", String(p.id), updated).catch(()=>{});
-                    return updated;
-                  });
-                };
-                r.onend = () => setRecording(null); 
-                r.onerror = () => setRecording(null);
-                recRef.current = r; r.start(); setRecording("doctorNotes");
-              }
-            }} style={{ ...P.sm, padding: "5px 10px", background: recording === "doctorNotes" ? "#ef4444" : "rgba(239,68,68,.12)", color: recording === "doctorNotes" ? "#fff" : "#f87171", border: "1px solid rgba(239,68,68,.3)" }}>
-              <Mic size={13} style={{ marginRight: 4 }} /> {recording === "doctorNotes" ? "Зупинити запис" : "Надиктувати голосом"}
+            <button
+              onClick={() => (recording === "doctorNotes" ? stopVoice() : startVoice("doctorNotes"))}
+              disabled={transcribing === "doctorNotes"}
+              style={{ ...P.sm, padding: "5px 10px", background: recording === "doctorNotes" ? "#ef4444" : transcribing === "doctorNotes" ? "rgba(139,92,246,.2)" : "rgba(239,68,68,.12)", color: recording === "doctorNotes" ? "#fff" : transcribing === "doctorNotes" ? "#c4b5fd" : "#f87171", border: "1px solid rgba(239,68,68,.3)" }}
+            >
+              <Mic size={13} style={{ marginRight: 4 }} />
+              {transcribing === "doctorNotes" ? "Розпізнавання аудіо..." : recording === "doctorNotes" ? "Зупинити запис" : "Надиктувати голосом"}
             </button>
             <button onClick={async () => {
               if (!study) return;
@@ -609,6 +600,37 @@ export default function Results() {
           </div>
         );
       })()}
+
+      {/* AI STUDY CHAT */}
+      <div style={{ marginTop: 16, background: "#13161c", border: "1px solid rgba(139,92,246,.28)", borderRadius: 10, overflow: "hidden" }}>
+        <button
+          onClick={() => setShowChat((v) => !v)}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "11px 14px",
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            color: "#c4b5fd"
+          }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 7 }}>
+            <MessageSquare size={15} /> ШІ-асистент по дослідженню (Чат)
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#8b919c" }}>
+            {showChat ? "Згорнути" : "Задати питання по знімкам"}
+            {showChat ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          </span>
+        </button>
+        {showChat && (
+          <div style={{ padding: "0 12px 12px" }}>
+            <StudyChat />
+          </div>
+        )}
+      </div>
 
       {/* ARCHIVE AND DELETE BUTTONS */}
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>

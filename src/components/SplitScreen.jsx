@@ -8,9 +8,11 @@ import {
   ArrowLeft, Search, FileText, Crosshair, Star, ChevronLeft, ChevronRight,
   Mic, MicOff, Trash2, Link, Ruler, TriangleRight, Circle, Sun, Brain,
   AlertCircle, Eye, X, BookOpen, Calendar, Layers, PanelLeft, Columns,
-  Maximize2, Play, Pause, RotateCcw
+  Maximize2, Play, Pause, RotateCcw, MessageSquare
 } from "lucide-react";
 import { dbGet } from "../services/db.js";
+import { scanSeriesSlices } from "../services/gemini.js";
+import StudyChat from "./StudyChat.jsx";
 
 export default function SplitScreen() {
   const context = React.useContext(AppContext);
@@ -22,7 +24,7 @@ export default function SplitScreen() {
     toolMode, setToolMode, measurements, clearSliceMeasurements,
     activeMeasure, setActiveMeasure, activeArea, setActiveArea,
     activeAngle, setActiveAngle, angleMousePos, setAngleMousePos,
-    vnotes, setVnotes, recording, startVoice, stopVoice,
+    vnotes, setVnotes, recording, transcribing, startVoice, stopVoice,
     manualQuery, setManualQuery, askManualAnatomy, generateAiReport,
     aiMarkers, setAiMarkers, aiScanning, setAiScanning,
     rightMode, setRightMode, compareSeriesKey, setCompareSeriesKey,
@@ -41,6 +43,8 @@ export default function SplitScreen() {
     typeof window !== "undefined" ? window.innerWidth < 768 : false
   );
   const [showAiDrawer, setShowAiDrawer] = useState(false);
+  const [drawerTab, setDrawerTab] = useState("anatomy");
+  const [scanStatus, setScanStatus] = useState("");
   const [cinePlaying, setCinePlaying] = useState(false);
   const [showLocalizer, setShowLocalizer] = useState(true);
   const [compareStudyId, setCompareStudyId] = useState(null);
@@ -55,7 +59,10 @@ export default function SplitScreen() {
 
   // Auto-open AI/Anatomy drawer when ROI result arrives
   useEffect(() => {
-    if (roiResult) setShowAiDrawer(true);
+    if (roiResult) {
+      setDrawerTab("anatomy");
+      setShowAiDrawer(true);
+    }
   }, [roiResult]);
 
   // Cine loop playback
@@ -76,41 +83,17 @@ export default function SplitScreen() {
     if (!apiKey) return flash("Введіть API ключ!");
     if (im.length === 0) return;
     setAiScanning(true);
+    setScanStatus("Підготовка...");
     setAiMarkers({});
 
     try {
-      const parts = [
-        {
-          text: `Ти — ШІ-асистент рентгенолога. Проаналізуй цю МРТ серію (Зона: ${ZONES[study.zone]?.ua || "Невідома"}).
-Я передаю тобі ${im.length} зрізів по порядку. Твоє завдання: знайти зрізи з ознаками патології.
-Поверни ТІЛЬКИ валідний JSON-масив у форматі: [{"slice": 3, "finding": "Опис проблеми"}, ...]. Якщо патологій немає, поверни []. Важливо: відлік зрізів починається з 0, ігноруй артефакти руху, шукай реальні патології.`
-        }
-      ];
-
-      for (let i = 0; i < im.length; i++) {
-        parts.push({ text: `Зріз ${i}:` });
-        parts.push({
-          inlineData: {
-            mimeType: "image/jpeg",
-            data: im[i].data.split(",")[1]
-          }
-        });
-      }
-
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.1 } })
+      const markers = await scanSeriesSlices({
+        apiKey,
+        model: aiModel,
+        slices: im,
+        zoneName: ZONES[study.zone]?.ua || "Невідома",
+        onStatus: setScanStatus
       });
-
-      const data = await resp.json();
-      if (data?.error) throw new Error(data.error.message);
-      let resText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-      resText = resText.replace(/```json/g, "").replace(/```/g, "").trim();
-      const parsed = JSON.parse(resText);
-
-      const markers = {};
-      parsed.forEach((p) => { if (p.slice !== undefined) markers[p.slice] = p.finding; });
       setAiMarkers(markers);
       flash(`Сканування завершено: знайдено ${Object.keys(markers).length} підозр.`);
     } catch (e) {
@@ -118,6 +101,7 @@ export default function SplitScreen() {
       flash("Помилка сканування: " + e.message);
     } finally {
       setAiScanning(false);
+      setScanStatus("");
     }
   };
 
@@ -474,7 +458,7 @@ export default function SplitScreen() {
             style={{ ...P.sm, padding: "6px 10px", fontSize: 11, background: "rgba(139,92,246,.16)", color: "#a78bfa", border: "0.5px solid rgba(139,92,246,.3)" }}
             title="Швидкий ШІ-пошук підозрілих зрізів у серії"
           >
-            <Brain size={13} /> {aiScanning ? "Сканування..." : "AI Скан"}
+            <Brain size={13} /> {aiScanning ? (scanStatus || "Сканування...") : "AI Скан"}
           </button>
 
           <button
@@ -501,19 +485,41 @@ export default function SplitScreen() {
           </button>
 
           <button
-            onClick={() => setShowAiDrawer((v) => !v)}
+            onClick={() => {
+              if (showAiDrawer && drawerTab === "anatomy") setShowAiDrawer(false);
+              else { setDrawerTab("anatomy"); setShowAiDrawer(true); }
+            }}
             className="mri-btn-hover"
             style={{
               ...P.sm,
               padding: "6px 10px",
               fontSize: 11,
-              background: showAiDrawer ? "rgba(224,169,59,.18)" : "#1a1d24",
-              color: showAiDrawer ? "#e0a93b" : "#cbd5e1",
-              borderColor: showAiDrawer ? "rgba(224,169,59,.35)" : "rgba(255,255,255,.08)"
+              background: showAiDrawer && drawerTab === "anatomy" ? "rgba(224,169,59,.18)" : "#1a1d24",
+              color: showAiDrawer && drawerTab === "anatomy" ? "#e0a93b" : "#cbd5e1",
+              borderColor: showAiDrawer && drawerTab === "anatomy" ? "rgba(224,169,59,.35)" : "rgba(255,255,255,.08)"
             }}
             title="Пошук анатомії та результат ROI"
           >
             <Search size={13} /> Анатомія
+          </button>
+
+          <button
+            onClick={() => {
+              if (showAiDrawer && drawerTab === "chat") setShowAiDrawer(false);
+              else { setDrawerTab("chat"); setShowAiDrawer(true); }
+            }}
+            className="mri-btn-hover"
+            style={{
+              ...P.sm,
+              padding: "6px 10px",
+              fontSize: 11,
+              background: showAiDrawer && drawerTab === "chat" ? "rgba(139,92,246,.2)" : "#1a1d24",
+              color: showAiDrawer && drawerTab === "chat" ? "#c4b5fd" : "#cbd5e1",
+              borderColor: showAiDrawer && drawerTab === "chat" ? "rgba(139,92,246,.38)" : "rgba(255,255,255,.08)"
+            }}
+            title="Чат з ІІ по поточному дослідженню"
+          >
+            <MessageSquare size={13} /> Чат
           </button>
         </div>
       </div>
@@ -875,10 +881,11 @@ export default function SplitScreen() {
 
               <button
                 onClick={() => recording === noteKey ? stopVoice() : startVoice(noteKey)}
-                style={{ ...P.sm, padding: "5px 8px", background: recording === noteKey ? "rgba(226,75,74,.2)" : "#1a1d24", color: recording === noteKey ? "#e24b4a" : "#8b919c" }}
+                disabled={transcribing === noteKey}
+                style={{ ...P.sm, padding: "5px 8px", background: recording === noteKey ? "rgba(226,75,74,.2)" : transcribing === noteKey ? "rgba(139,92,246,.2)" : "#1a1d24", color: recording === noteKey ? "#e24b4a" : transcribing === noteKey ? "#a78bfa" : "#8b919c" }}
                 title="Голосова нотатка (Пробіл)"
               >
-                {recording === noteKey ? <MicOff size={12} /> : <Mic size={12} />}
+                {transcribing === noteKey ? "⏳" : recording === noteKey ? <MicOff size={12} /> : <Mic size={12} />}
               </button>
 
               {roi && roi.w > 0.02 && (
@@ -906,9 +913,10 @@ export default function SplitScreen() {
             {/* EDITABLE NOTE FOR CURRENT SLICE */}
             <div style={{ marginTop: 4, background: "#13161c", border: `0.5px solid ${recording === noteKey ? "rgba(226,75,74,.5)" : vnotes[noteKey]?.trim() ? "rgba(6,182,212,.3)" : "rgba(255,255,255,.07)"}`, borderRadius: 6, padding: "5px 8px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
-                <span style={{ fontSize: 10, fontWeight: 600, color: recording === noteKey ? "#e24b4a" : vnotes[noteKey]?.trim() ? "#06b6d4" : "#8b919c", display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ fontSize: 10, fontWeight: 600, color: recording === noteKey ? "#e24b4a" : transcribing === noteKey ? "#a78bfa" : vnotes[noteKey]?.trim() ? "#06b6d4" : "#8b919c", display: "flex", alignItems: "center", gap: 4 }}>
                   <FileText size={11} /> Нотатка #{splitIdx + 1}
                   {recording === noteKey && <span style={{ color: "#e24b4a", fontSize: 9, fontWeight: 700, animation: "pulse 1s infinite" }}>● ЗАПИС...</span>}
+                  {transcribing === noteKey && <span style={{ color: "#a78bfa", fontSize: 9, fontWeight: 700 }}>⏳ Розпізнавання...</span>}
                 </span>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <button
@@ -1274,10 +1282,35 @@ export default function SplitScreen() {
               zIndex: 25
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,.07)" }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#e0a93b", display: "flex", alignItems: "center", gap: 6 }}>
-                <Crosshair size={14} /> Орієнтація та анатомія
-              </span>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", borderBottom: "1px solid rgba(255,255,255,.07)", gap: 6 }}>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button
+                  onClick={() => setDrawerTab("anatomy")}
+                  style={{
+                    ...P.sm,
+                    padding: "5px 9px",
+                    fontSize: 11,
+                    background: drawerTab === "anatomy" ? "rgba(224,169,59,.16)" : "transparent",
+                    color: drawerTab === "anatomy" ? "#e0a93b" : "#8b919c",
+                    borderColor: drawerTab === "anatomy" ? "rgba(224,169,59,.3)" : "transparent"
+                  }}
+                >
+                  <Crosshair size={12} /> Анатомія / ROI
+                </button>
+                <button
+                  onClick={() => setDrawerTab("chat")}
+                  style={{
+                    ...P.sm,
+                    padding: "5px 9px",
+                    fontSize: 11,
+                    background: drawerTab === "chat" ? "rgba(139,92,246,.18)" : "transparent",
+                    color: drawerTab === "chat" ? "#c4b5fd" : "#8b919c",
+                    borderColor: drawerTab === "chat" ? "rgba(139,92,246,.32)" : "transparent"
+                  }}
+                >
+                  <MessageSquare size={12} /> Чат з ІІ
+                </button>
+              </div>
               <button
                 onClick={() => setShowAiDrawer(false)}
                 style={{ background: "rgba(255,255,255,.06)", border: "none", borderRadius: 6, padding: 4, color: "#8b919c", cursor: "pointer", display: "flex" }}
@@ -1286,102 +1319,114 @@ export default function SplitScreen() {
               </button>
             </div>
 
-            {/* Manual Anatomy Search */}
-            <div style={{ padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,.06)", display: "flex", gap: 6 }}>
-              <input
-                type="text"
-                value={manualQuery}
-                onChange={(e) => setManualQuery(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") askManualAnatomy(manualQuery); }}
-                placeholder="Запитати про структуру..."
-                style={{ ...P.inp, padding: "6px 9px", fontSize: 12, background: "#0c0e12", flex: 1 }}
-              />
-              <button
-                onClick={() => askManualAnatomy(manualQuery)}
-                disabled={roiLoading || !manualQuery.trim()}
-                style={{ ...P.sm, padding: "6px 10px", background: "#1d6ea8", color: "#fff", border: "none" }}
-              >
-                <Search size={13} />
-              </button>
-            </div>
-
-            <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-              {roiLoading ? (
-                <div style={{ textAlign: "center", padding: "36px 12px", color: "#e0a93b", fontSize: 12 }}>
-                  ⏳ ШІ визначає анатомічну структуру...
+            {drawerTab === "chat" ? (
+              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                <StudyChat
+                  compact
+                  currentSliceDataUrl={im[splitIdx]?.data || null}
+                  currentSliceLabel={`${seriesKey()} #${splitIdx + 1}`}
+                />
+              </div>
+            ) : (
+              <>
+                {/* Manual Anatomy Search */}
+                <div style={{ padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,.06)", display: "flex", gap: 6 }}>
+                  <input
+                    type="text"
+                    value={manualQuery}
+                    onChange={(e) => setManualQuery(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") askManualAnatomy(manualQuery); }}
+                    placeholder="Запитати про структуру..."
+                    style={{ ...P.inp, padding: "6px 9px", fontSize: 12, background: "#0c0e12", flex: 1 }}
+                  />
+                  <button
+                    onClick={() => askManualAnatomy(manualQuery)}
+                    disabled={roiLoading || !manualQuery.trim()}
+                    style={{ ...P.sm, padding: "6px 10px", background: "#1d6ea8", color: "#fff", border: "none" }}
+                  >
+                    <Search size={13} />
+                  </button>
                 </div>
-              ) : roiResult ? (() => {
-                const cands = roiResult.candidates || [];
-                const idConf = roiResult.id_confidence_overall ?? (cands[0]?.id_confidence ?? 0);
-                const confColorVal = idConf >= 80 ? "#4ec99b" : idConf >= 60 ? "#e0a93b" : "#e24b4a";
-                const anat = roiResult.anatomy || {};
-                return (
-                  <div>
-                    <p style={{ fontSize: 10, color: "#5f6672", marginBottom: 10, lineHeight: 1.4 }}>
-                      ІІ допомагає визначити анатомію. Рішення про патологію — за лікарем.
-                    </p>
 
-                    <div style={{ marginBottom: 10 }}>
-                      <p style={{ fontSize: 10, color: "#8b919c", textTransform: "uppercase", marginBottom: 5, fontFamily: "'JetBrains Mono',monospace" }}>Кандидати структури</p>
-                      {cands.map((c, i) => (
-                        <div key={i} style={{ background: i === 0 ? "rgba(74,163,223,.07)" : "#0f1217", border: `0.5px solid ${i === 0 ? "rgba(74,163,223,.25)" : "rgba(255,255,255,.05)"}`, borderRadius: 6, padding: "8px 10px", marginBottom: 5 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 3 }}>
-                            <span style={{ fontSize: 13, fontWeight: 500, color: i === 0 ? "#e8eaed" : "#c4c9d0" }}>{i === 0 && "★ "}{c.structure}</span>
-                            <span style={{ fontSize: 11, fontWeight: 500, fontFamily: "'JetBrains Mono',monospace", color: c.id_confidence >= 80 ? "#4ec99b" : c.id_confidence >= 60 ? "#e0a93b" : "#e24b4a", whiteSpace: "nowrap" }}>{c.id_confidence}%</span>
-                          </div>
-                          {c.reasoning && <p style={{ fontSize: 11, color: "#8b919c", lineHeight: 1.4 }}>{c.reasoning}</p>}
+                <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+                  {roiLoading ? (
+                    <div style={{ textAlign: "center", padding: "36px 12px", color: "#e0a93b", fontSize: 12 }}>
+                      ⏳ ШІ визначає анатомічну структуру...
+                    </div>
+                  ) : roiResult ? (() => {
+                    const cands = roiResult.candidates || [];
+                    const idConf = roiResult.id_confidence_overall ?? (cands[0]?.id_confidence ?? 0);
+                    const confColorVal = idConf >= 80 ? "#4ec99b" : idConf >= 60 ? "#e0a93b" : "#e24b4a";
+                    const anat = roiResult.anatomy || {};
+                    return (
+                      <div>
+                        <p style={{ fontSize: 10, color: "#5f6672", marginBottom: 10, lineHeight: 1.4 }}>
+                          ІІ допомагає визначити анатомію. Рішення про патологію — за лікарем.
+                        </p>
+
+                        <div style={{ marginBottom: 10 }}>
+                          <p style={{ fontSize: 10, color: "#8b919c", textTransform: "uppercase", marginBottom: 5, fontFamily: "'JetBrains Mono',monospace" }}>Кандидати структури</p>
+                          {cands.map((c, i) => (
+                            <div key={i} style={{ background: i === 0 ? "rgba(74,163,223,.07)" : "#0f1217", border: `0.5px solid ${i === 0 ? "rgba(74,163,223,.25)" : "rgba(255,255,255,.05)"}`, borderRadius: 6, padding: "8px 10px", marginBottom: 5 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                                <span style={{ fontSize: 13, fontWeight: 500, color: i === 0 ? "#e8eaed" : "#c4c9d0" }}>{i === 0 && "★ "}{c.structure}</span>
+                                <span style={{ fontSize: 11, fontWeight: 500, fontFamily: "'JetBrains Mono',monospace", color: c.id_confidence >= 80 ? "#4ec99b" : c.id_confidence >= 60 ? "#e0a93b" : "#e24b4a", whiteSpace: "nowrap" }}>{c.id_confidence}%</span>
+                              </div>
+                              {c.reasoning && <p style={{ fontSize: 11, color: "#8b919c", lineHeight: 1.4 }}>{c.reasoning}</p>}
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
 
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, padding: "8px 10px", background: "#0f1217", borderRadius: 6 }}>
-                      <span style={{ fontSize: 11, color: "#8b919c" }}>Впевненість в ідентифікації:</span>
-                      <span style={{ fontSize: 13, fontWeight: 500, fontFamily: "'JetBrains Mono',monospace", color: confColorVal }}>{idConf}%</span>
-                    </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, padding: "8px 10px", background: "#0f1217", borderRadius: 6 }}>
+                          <span style={{ fontSize: 11, color: "#8b919c" }}>Впевненість в ідентифікації:</span>
+                          <span style={{ fontSize: 13, fontWeight: 500, fontFamily: "'JetBrains Mono',monospace", color: confColorVal }}>{idConf}%</span>
+                        </div>
 
-                    {roiResult.uncertainty_note && (
-                      <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(224,169,59,.06)", border: "0.5px solid rgba(224,169,59,.15)", borderRadius: 6 }}>
-                        <p style={{ fontSize: 10, fontWeight: 500, color: "#e0a93b", marginBottom: 3, display: "flex", alignItems: "center", gap: 4 }}><AlertCircle size={11} /> Що ускладнює визначення</p>
-                        <p style={{ fontSize: 11, color: "#c4c9d0", lineHeight: 1.4 }}>{roiResult.uncertainty_note}</p>
-                      </div>
-                    )}
+                        {roiResult.uncertainty_note && (
+                          <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(224,169,59,.06)", border: "0.5px solid rgba(224,169,59,.15)", borderRadius: 6 }}>
+                            <p style={{ fontSize: 10, fontWeight: 500, color: "#e0a93b", marginBottom: 3, display: "flex", alignItems: "center", gap: 4 }}><AlertCircle size={11} /> Що ускладнює визначення</p>
+                            <p style={{ fontSize: 11, color: "#c4c9d0", lineHeight: 1.4 }}>{roiResult.uncertainty_note}</p>
+                          </div>
+                        )}
 
-                    {(anat.description || anat.function || anat.origin || anat.segment_level || anat.lobe_region) && (
-                      <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(155,140,219,.06)", border: "0.5px solid rgba(155,140,219,.12)", borderRadius: 6 }}>
-                        <p style={{ fontSize: 10, fontWeight: 500, color: "#9b8cdb", textTransform: "uppercase", marginBottom: 6, fontFamily: "'JetBrains Mono',monospace" }}>Анатомічна довідка</p>
-                        {anat.description && <p style={{ fontSize: 11, color: "#c4c9d0", marginBottom: 4, lineHeight: 1.4 }}>{anat.description}</p>}
-                        {anat.function && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Функція: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.function}</span></div>}
-                        {anat.origin && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Початок: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.origin}</span></div>}
-                        {anat.insertion && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Прикріплення: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.insertion}</span></div>}
-                        {anat.innervation && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Іннервація: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.innervation}</span></div>}
-                        {anat.segment_level && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Рівень: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.segment_level}</span></div>}
-                        {anat.nerve_relation && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Нервові структури: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.nerve_relation}</span></div>}
-                        {anat.lobe_region && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Регіон: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.lobe_region}</span></div>}
-                        {anat.blood_supply && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Кровопостачання: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.blood_supply}</span></div>}
-                        {anat.typical_pathologies && (
-                          <div style={{ marginTop: 4, paddingTop: 4, borderTop: "0.5px solid rgba(155,140,219,.1)" }}>
-                            <span style={{ fontSize: 10, color: "#e0a93b", fontWeight: 500 }}>Типові патології: </span><span style={{ fontSize: 11, color: "#c4c9d0" }}>{anat.typical_pathologies}</span>
+                        {(anat.description || anat.function || anat.origin || anat.segment_level || anat.lobe_region) && (
+                          <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(155,140,219,.06)", border: "0.5px solid rgba(155,140,219,.12)", borderRadius: 6 }}>
+                            <p style={{ fontSize: 10, fontWeight: 500, color: "#9b8cdb", textTransform: "uppercase", marginBottom: 6, fontFamily: "'JetBrains Mono',monospace" }}>Анатомічна довідка</p>
+                            {anat.description && <p style={{ fontSize: 11, color: "#c4c9d0", marginBottom: 4, lineHeight: 1.4 }}>{anat.description}</p>}
+                            {anat.function && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Функція: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.function}</span></div>}
+                            {anat.origin && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Початок: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.origin}</span></div>}
+                            {anat.insertion && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Прикріплення: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.insertion}</span></div>}
+                            {anat.innervation && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Іннервація: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.innervation}</span></div>}
+                            {anat.segment_level && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Рівень: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.segment_level}</span></div>}
+                            {anat.nerve_relation && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Нервові структури: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.nerve_relation}</span></div>}
+                            {anat.lobe_region && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Регіон: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.lobe_region}</span></div>}
+                            {anat.blood_supply && <div style={{ marginBottom: 3 }}><span style={{ fontSize: 10, color: "#9b8cdb", fontWeight: 500 }}>Кровопостачання: </span><span style={{ fontSize: 11, color: "#8b919c" }}>{anat.blood_supply}</span></div>}
+                            {anat.typical_pathologies && (
+                              <div style={{ marginTop: 4, paddingTop: 4, borderTop: "0.5px solid rgba(155,140,219,.1)" }}>
+                                <span style={{ fontSize: 10, color: "#e0a93b", fontWeight: 500 }}>Типові патології: </span><span style={{ fontSize: 11, color: "#c4c9d0" }}>{anat.typical_pathologies}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {roiResult.what_to_check && (
+                          <div style={{ background: "rgba(74,163,223,.07)", borderRadius: 6, padding: "8px 10px" }}>
+                            <p style={{ fontSize: 10, color: "#4aa3df", fontWeight: 500, marginBottom: 3, display: "flex", alignItems: "center", gap: 4 }}><Eye size={11} /> На що звернути увагу</p>
+                            <p style={{ fontSize: 11, color: "#c4c9d0", lineHeight: 1.4 }}>{roiResult.what_to_check}</p>
                           </div>
                         )}
                       </div>
-                    )}
-
-                    {roiResult.what_to_check && (
-                      <div style={{ background: "rgba(74,163,223,.07)", borderRadius: 6, padding: "8px 10px" }}>
-                        <p style={{ fontSize: 10, color: "#4aa3df", fontWeight: 500, marginBottom: 3, display: "flex", alignItems: "center", gap: 4 }}><Eye size={11} /> На що звернути увагу</p>
-                        <p style={{ fontSize: 11, color: "#c4c9d0", lineHeight: 1.4 }}>{roiResult.what_to_check}</p>
-                      </div>
-                    )}
-                  </div>
-                );
-              })() : (
-                <div style={{ textAlign: "center", padding: "32px 12px", color: "#5f6672", fontSize: 12, lineHeight: 1.5 }}>
-                  <Crosshair size={24} style={{ margin: "0 auto 8px", opacity: 0.5 }} />
-                  <p style={{ margin: "0 0 6px", color: "#8b919c" }}>Виділіть ділянку на знімку в режимі ROI (1) та натисніть «Що це?»</p>
-                  <p style={{ margin: 0, fontSize: 11 }}>Або введіть назву анатомічної структури у полі пошуку вище.</p>
+                    );
+                  })() : (
+                    <div style={{ textAlign: "center", padding: "32px 12px", color: "#5f6672", fontSize: 12, lineHeight: 1.5 }}>
+                      <Crosshair size={24} style={{ margin: "0 auto 8px", opacity: 0.5 }} />
+                      <p style={{ margin: "0 0 6px", color: "#8b919c" }}>Виділіть ділянку на знімку в режимі ROI (1) та натисніть «Що це?»</p>
+                      <p style={{ margin: 0, fontSize: 11 }}>Або введіть назву анатомічної структури у полі пошуку вище.</p>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
           </div>
         )}
       </div>

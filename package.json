@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@google/genai": "^3.6.1",
     "@supabase/supabase-js": "^2.116.0",
     "daikon": "^1.2.46",
     "lucide-react": "^0.383.0",

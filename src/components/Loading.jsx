@@ -19,7 +19,7 @@ export default function Loading() {
           <>
             <div style={P.prB}><div style={{ ...P.prF, width: `${prog.p}%` }} /></div>
             <p style={P.prT}>
-              {prog.s === "send" ? "Відправка зображень..." : prog.s === "ai" ? "ШІ аналізує зрізи..." : "Формування звіту..."}
+              {prog.label || (prog.s === "send" ? "Відправка зображень..." : prog.s === "ai" ? "ШІ аналізує зрізи..." : "Формування звіту...")}
             </p>
           </>
         )}

@@ -3,9 +3,20 @@ import { supabase } from "../services/supabase.js";
 import { openDB, dbGet, dbPut, dbGetAll } from "../services/db.js";
 import { parseDicomFileInWorker } from "../services/dicomLoader.js";
 import { ZONES, parseSeriesKey, formatSeriesLabel } from "../constants/anatomy.js";
-import { SYS_PROMPT, getSysPromptAnalyze, getPromptRoi, getPromptManual } from "../constants/prompts.js";
+import { SYS_PROMPT, getPromptRoi, getPromptManual } from "../constants/prompts.js";
 import { anonymizeImage, collectZoneMaterials, confColor, compressImage } from "../utils/helpers.js";
 import { STRUCTURED_KB, INITIAL_KB } from "../constants/anatomy_kb.js";
+import {
+  DEFAULT_MODEL,
+  normalizeModelId,
+  analyzeStudy,
+  analyzeRoiRegion,
+  askAnatomyQuestion,
+  extractConclusionOcr,
+  reviewCenterConclusion,
+  generateMedicalProtocol,
+  transcribeMedicalAudio
+} from "../services/gemini.js";
 
 const isUuid = (id) => typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
@@ -22,7 +33,7 @@ export function AppProvider({ children }) {
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(null);
   const [apiKeyIn, setApiKeyIn] = useState("");
-  const [aiModel, setAiModel] = useState("gemini-2.5-flash");
+  const [aiModel, setAiModel] = useState(DEFAULT_MODEL);
   const [refs, setRefs] = useState({});
   const [atlas, setAtlas] = useState({}); // {zone: [{id, name, data, label}]}
   const [kb, setKb] = useState({}); // {zone: [{id, title, text}]}
@@ -41,6 +52,7 @@ export function AppProvider({ children }) {
   const [prevScr, setPrevScr] = useState("new");
   const [vnotes, setVnotes] = useState({});
   const [recording, setRecording] = useState(null);
+  const [transcribing, setTranscribing] = useState(null);
   const [pdfM, setPdfM] = useState(null);
   const [pdfOk, setPdfOk] = useState(false);
   const [toast, setToast] = useState(null);
@@ -82,7 +94,7 @@ export function AppProvider({ children }) {
   const [panning, setPanning] = useState(null); // {side, startX, startY, origX, origY}
   const [refSource, setRefSource] = useState("refs"); // "refs" | "atlas" | "kb"
 
-  const refIn = useRef(null), pdfIn = useRef(null), patIn = useRef(null), folderIn = useRef(null), recRef = useRef(null), attachIn = useRef(null), atlasIn = useRef(null);
+  const refIn = useRef(null), pdfIn = useRef(null), patIn = useRef(null), folderIn = useRef(null), recRef = useRef(null), mediaRecRef = useRef(null), audioChunksRef = useRef([]), attachIn = useRef(null), atlasIn = useRef(null);
   const roiImgRef = useRef(null);
 
   // Clipboard paste handler for library
@@ -177,7 +189,14 @@ export function AppProvider({ children }) {
     } else setPdfOk(true);
     (async () => {
       try { const r = localStorage.getItem("mri-key"); if (r) { setApiKey(r); setApiKeyIn(r); } } catch {}
-      try { const r = localStorage.getItem("mri-model"); if (r) setAiModel(r); } catch {}
+      try {
+        const r = localStorage.getItem("mri-model");
+        if (r) {
+          const normalized = normalizeModelId(r);
+          setAiModel(normalized);
+          if (normalized !== r) localStorage.setItem("mri-model", normalized);
+        }
+      } catch {}
       try { const r = localStorage.getItem("mri-hist"); if (r) setStudies(JSON.parse(r)); } catch {}
       // Load refs, atlas, kb from IndexedDB
       try {
@@ -494,15 +513,124 @@ export function AppProvider({ children }) {
     flash(`${out.length} стор. додано → "${ZONES[selZone].short}"`);
   };
 
-  const startVoice = (idx) => {
+  const appendDictatedText = (targetKey, text) => {
+    const clean = (text || "").trim();
+    if (!clean) return;
+    if (targetKey === "doctorNotes") {
+      setStudy((p) => {
+        if (!p) return p;
+        const updated = { ...p, doctorNotes: (p.doctorNotes ? p.doctorNotes + " " : "") + clean };
+        dbPut("studies", String(p.id), updated).catch(() => {});
+        return updated;
+      });
+    } else {
+      setVnotes((p) => ({
+        ...p,
+        [targetKey]: (p[targetKey] ? p[targetKey].trimEnd() + " " : "") + clean
+      }));
+    }
+  };
+
+  const startVoice = async (targetKey) => {
+    if (recording) {
+      stopVoice();
+      return;
+    }
+
+    // Prefer Gemini multimodal medical audio transcription when API key & MediaRecorder are available
+    const canRecordAudio = typeof navigator !== "undefined" &&
+      Boolean(navigator.mediaDevices?.getUserMedia) &&
+      typeof window !== "undefined" &&
+      Boolean(window.MediaRecorder);
+
+    if (apiKey && canRecordAudio) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mimeOptions = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+        const chosenMime = mimeOptions.find((m) => window.MediaRecorder.isTypeSupported?.(m)) || "";
+        const recorder = chosenMime ? new window.MediaRecorder(stream, { mimeType: chosenMime }) : new window.MediaRecorder(stream);
+        const zoneName = ZONES[study?.zone]?.ua || "";
+
+        audioChunksRef.current = [];
+        recorder.ondataavailable = (ev) => {
+          if (ev.data && ev.data.size > 0) audioChunksRef.current.push(ev.data);
+        };
+        recorder.onstop = async () => {
+          stream.getTracks().forEach((t) => t.stop());
+          setRecording(null);
+          const chunks = audioChunksRef.current;
+          audioChunksRef.current = [];
+          if (!chunks.length) return;
+
+          const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+          if (blob.size < 400) return;
+
+          setTranscribing(targetKey);
+          try {
+            const dataUrl = await new Promise((resolve, reject) => {
+              const fr = new FileReader();
+              fr.onload = () => resolve(fr.result);
+              fr.onerror = reject;
+              fr.readAsDataURL(blob);
+            });
+            const b64 = String(dataUrl).split(",")[1] || "";
+            const text = await transcribeMedicalAudio({
+              apiKey,
+              audioBase64: b64,
+              mimeType: blob.type || "audio/webm",
+              zoneName
+            });
+            if (text) {
+              appendDictatedText(targetKey, text);
+              flash("Аудіо розпізнано");
+            } else {
+              flash("Мовлення не виявлено");
+            }
+          } catch (err) {
+            console.error("Gemini audio transcription error:", err);
+            flash(`Помилка розпізнавання аудіо: ${err.message || err}`);
+          } finally {
+            setTranscribing(null);
+          }
+        };
+
+        mediaRecRef.current = recorder;
+        recorder.start();
+        setRecording(targetKey);
+        return;
+      } catch (micErr) {
+        console.warn("MediaRecorder unavailable, falling back to Web Speech API:", micErr);
+      }
+    }
+
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { flash("Голосовий ввід не підтримується"); return; }
-    const r = new SR(); r.lang = "uk-UA"; r.continuous = true; r.interimResults = false;
-    r.onresult = e => { const t = Array.from(e.results).map(x => x[0].transcript).join(" "); setVnotes(p => ({ ...p, [idx]: (p[idx] || "") + " " + t })); };
-    r.onend = () => setRecording(null); r.onerror = () => setRecording(null);
-    recRef.current = r; r.start(); setRecording(idx);
+    const r = new SR();
+    r.lang = "uk-UA";
+    r.continuous = true;
+    r.interimResults = false;
+    r.onresult = (e) => {
+      const t = Array.from(e.results).map((x) => x[0].transcript).join(" ");
+      appendDictatedText(targetKey, t);
+    };
+    r.onend = () => setRecording(null);
+    r.onerror = () => setRecording(null);
+    recRef.current = r;
+    r.start();
+    setRecording(targetKey);
   };
-  const stopVoice = () => { if (recRef.current) recRef.current.stop(); setRecording(null); };
+
+  const stopVoice = () => {
+    if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
+      mediaRecRef.current.stop();
+      mediaRecRef.current = null;
+    }
+    if (recRef.current) {
+      try { recRef.current.stop(); } catch {}
+      recRef.current = null;
+    }
+    setRecording(null);
+  };
 
   const newStudy = () => {
     const now = new Date();
@@ -691,51 +819,8 @@ export function AppProvider({ children }) {
 
     setOcrLoading(true);
     try {
-      const parts = [{
-        text: `Ти висококваліфікований медичний секретар та асистент радіолога.
-Перед тобою офіційний документ: медичний висновок (протокол) МРТ діагностичного центру.
-
-ТВОЄ ЗАВДАННЯ:
-1. Прочитай та витягни ПОВНИЙ ТЕКСТ усього документа від початку до кінця (OCR), нічого не скорочуючи і не обриваючи!
-2. Обов'язково прочитай весь розділ знахідок: кістки, меніски (медіальний/латеральний), зв'язки (ПХЗ, ЗХЗ, колатеральні), сухожилля, капсулу, суглобовий хрящ, наявність випоту.
-3. Обов'язково дослівно або максимально точно випиши підсумковий блок «ВИСНОВОК» (ЗАКЛЮЧЕННЯ) діагностичного центру.
-4. Оформи структуровано, красиво та акуратно українською мовою:
-
---- ЗАКЛЮЧЕННЯ МРТ ЦЕНТРУ ---
-• Пацієнт / Дата / Апарат / Контраст / Зона
-• Протокол дослідження (імпульсні послідовності)
-• Опис виявлених змін (детально за анатомічними структурами)
-• ВИСНОВОК ЦЕНТРУ (повне заключення лікаря-рентгенолога)
-
-Виводь тільки структурований текст висновку, без жодних вступних слів чи коментарів від себе.`
-      }];
-
-      for (const att of attachments) {
-        if (att.data && att.data.includes(",")) {
-          const mime = att.type || (att.data.startsWith("data:image/png") ? "image/png" : att.data.startsWith("data:application/pdf") ? "application/pdf" : "image/jpeg");
-          parts.push({
-            inline_data: {
-              mime_type: mime.startsWith("application/pdf") ? "application/pdf" : "image/jpeg",
-              data: att.data.split(",")[1]
-            }
-          });
-        }
-      }
-
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts }],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 8192 }
-        })
-      });
-
-      const data = await resp.json();
-      if (data?.error) throw new Error(data.error.message);
-
-      const extractedText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      if (!extractedText.trim()) throw new Error("Не вдалося розпізнати текст на зображенні");
+      const extractedText = await extractConclusionOcr({ apiKey, model: aiModel, attachments });
+      if (!extractedText) throw new Error("Не вдалося розпізнати текст на зображенні");
 
       const existingNotes = study.doctorNotes || "";
       const updatedNotes = existingNotes 
@@ -787,54 +872,16 @@ export function AppProvider({ children }) {
 
     setReviewLoading(true);
     try {
-      const parts = [];
-      parts.push({ text: `Ти досвідчений радіолог. Тобі надано:
-1. Заключення МРТ від діагностичного центру (фото або PDF)
-2. Результати твого попереднього аналізу знімків цього пацієнта
-
-Порівняй заключення центру зі своїми знахідками. Відповідай ТІЛЬКИ валідним JSON українською:
-{
-  "overall_agreement": "agree|partial|disagree",
-  "overall_comment": "Загальна оцінка",
-  "details": [
-    {"point": "Що саме порівнюєш", "center_says": "Що написав центр", "ai_says": "Що вважаєш ти", "agreement": "agree|disagree", "comment": "Коментар"}
-  ],
-  "missed_by_center": ["Що центр міг пропустити"],
-  "missed_by_ai": ["Що ІІ міг пропустити"],
-  "recommendation": "Загальна рекомендація"
-}` });
-
-      parts.push({ text: `\n--- РЕЗУЛЬТАТИ ІІ АНАЛІЗУ ---\nЗона: ${ZONES[study.zone]?.ua}\nЗнахідки: ${JSON.stringify(study.findings || [])}\nВисновок ІІ: ${study.summary || "немає"}\n` });
-
-      parts.push({ text: "\n--- ЗАКЛЮЧЕННЯ ВІД ЦЕНТРУ ---" });
-      for (const att of attachments) {
-        if (att.type.startsWith("image/")) {
-          parts.push({ inline_data: { mime_type: "image/jpeg", data: att.data.split(",")[1] } });
-        } else if (att.type === "application/pdf") {
-          parts.push({ inline_data: { mime_type: "application/pdf", data: att.data.split(",")[1] } });
-        }
-      }
-
-      parts.push({ text: "\nПорівняй заключення центру зі своїми знахідками. Будь детальним." });
-
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.15, maxOutputTokens: 8192 } })
+      const rev = await reviewCenterConclusion({
+        apiKey,
+        model: aiModel,
+        study,
+        zoneName: ZONES[study.zone]?.ua || "",
+        attachments
       });
-
-      const data = await resp.json();
-      if (data?.error) throw new Error(data.error.message);
-
-      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const clean = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      try {
-        setConclusionReview(JSON.parse(clean));
-      } catch {
-        setConclusionReview({ overall_agreement: "partial", overall_comment: clean, details: [], missed_by_center: [], missed_by_ai: [], recommendation: "" });
-      }
-
-      // Save review to study
-      try { await dbPut("studies", String(study.id), { ...study, conclusionReview: JSON.parse(clean) }); } catch {}
+      setConclusionReview(rev);
+      setStudy(p => p ? ({ ...p, conclusionReview: rev }) : p);
+      try { await dbPut("studies", String(study.id), { ...study, conclusionReview: rev }); } catch {}
     } catch (err) {
       flash(`Помилка: ${err.message}`);
     } finally {
@@ -1033,53 +1080,22 @@ export function AppProvider({ children }) {
       const cropped = await cropRoi(im[splitIdx].data, roi);
       if (!cropped) { flash("Занадто мала ділянка"); setRoiLoading(false); return; }
 
-      const parts = [];
-      parts.push({ text: getPromptRoi(ZONES[study.zone]?.group || "joints", ZONES[study.zone]?.ua || "Анатомія", seriesKey(), splitIdx + 1) });
-
-      // Send atlas images (labeled anatomy references) — includes related detailed structures
+      const prompt = getPromptRoi(ZONES[study.zone]?.group || "joints", ZONES[study.zone]?.ua || "Анатомія", seriesKey(), splitIdx + 1);
       const zoneAtlas = collectZoneMaterials(atlas, study.zone);
-      if (zoneAtlas.length > 0) {
-        parts.push({ text: "\n--- АНАТОМІЧНИЙ АТЛАС (підписані структури для орієнтації) ---" });
-        for (const a of zoneAtlas.slice(0, 12)) {
-          parts.push({ inline_data: { mime_type: "image/jpeg", data: a.data.split(",")[1] } });
-          if (a.label) parts.push({ text: `Підпис: ${a.label}` });
-        }
-      }
-
-      // Send reference normal images if available
       const zoneRefs = collectZoneMaterials(refs, study.zone);
-      if (zoneRefs.length > 0) {
-        parts.push({ text: "\n--- РЕФЕРЕНСИ НОРМИ (для порівняння) ---" });
-        for (const r of zoneRefs.slice(0, 5)) {
-          parts.push({ inline_data: { mime_type: "image/jpeg", data: r.data.split(",")[1] } });
-        }
-      }
-
-      // Knowledge base rules — includes related detailed structures
       const zoneKb = collectZoneMaterials(kb, study.zone);
-      if (zoneKb.length > 0) {
-        parts.push({ text: "\n--- БАЗА ЗНАНЬ (діагностичні критерії) ---\n" + zoneKb.map(e => `[${e.title}]\n${e.text}`).join("\n\n") + "\n" });
-      }
 
-      // Send full slice for context
-      parts.push({ text: "\n--- ПОВНИЙ ЗРІЗ (для контексту) ---" });
-      parts.push({ inline_data: { mime_type: "image/jpeg", data: im[splitIdx].data.split(",")[1] } });
-
-      // Send cropped ROI
-      parts.push({ text: "\n--- ВИДІЛЕНА ДІЛЯНКА (пріоритет аналізу) ---" });
-      parts.push({ inline_data: { mime_type: "image/jpeg", data: cropped.split(",")[1] } });
-
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.15, maxOutputTokens: 4096 } })
+      const result = await analyzeRoiRegion({
+        apiKey,
+        model: aiModel,
+        prompt,
+        zoneAtlas,
+        zoneRefs,
+        zoneKb,
+        fullSliceDataUrl: im[splitIdx].data,
+        croppedDataUrl: cropped
       });
-
-      const data = await resp.json();
-      if (data?.error) throw new Error(data.error.message);
-
-      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const clean = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      try { setRoiResult(JSON.parse(clean)); } catch { setRoiResult({ candidates: [{ structure: "Не вдалося розпарсити", reasoning: clean, id_confidence: 0 }], id_confidence_overall: 0, anatomy: {}, what_to_check: "", uncertainty_note: "" }); }
+      setRoiResult(result);
     } catch (err) {
       flash(`Помилка: ${err.message}`);
     } finally {
@@ -1091,18 +1107,9 @@ export function AppProvider({ children }) {
     if (!apiKey || !queryText.trim()) return;
     setRoiLoading(true);
     try {
-      const parts = [];
-      parts.push({ text: getPromptManual(ZONES[study?.zone]?.group || "joints", queryText) });
-
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.15, maxOutputTokens: 2000 } })
-      });
-      const data = await resp.json();
-      if (data?.error) throw new Error(data.error.message);
-      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const clean = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      setRoiResult(JSON.parse(clean));
+      const prompt = getPromptManual(ZONES[study?.zone]?.group || "joints", queryText);
+      const result = await askAnatomyQuestion({ apiKey, model: aiModel, prompt });
+      setRoiResult(result);
       setManualQuery("");
     } catch (err) {
       flash(`Помилка: ${err.message}`);
@@ -1198,69 +1205,32 @@ export function AppProvider({ children }) {
     const usedSeqs = Object.entries(study.series).filter(([_, a]) => a.length > 0).map(([s]) => s);
 
     try {
-      const parts = [{ text: SYS_PROMPT }];
-      parts.push({ text: `\nЗона: ${ZONES[study.zone].ua}\nСерії: ${usedSeqs.join(", ")}\nЗагальна кількість зрізів: ${all.length}\n` });
-
-      // Clinical context
-      const ctx = [];
-      if (study.age) ctx.push(`Вік: ${study.age}`);
-      if (study.complaints) ctx.push(`Скарги: ${study.complaints}`);
-      if (study.mechanism) ctx.push(`Механізм травми / анамнез: ${study.mechanism}`);
-      if (ctx.length) parts.push({ text: `\n--- КЛІНІЧНИЙ КОНТЕКСТ ---\n${ctx.join("\n")}\nВраховуй цей контекст при діагностиці.\n` });
-
-      // Few-shot learning: include past confirmed corrections
       const pastCases = await getPastCorrections(study.zone);
-      if (pastCases.length > 0) {
-        parts.push({ text: `\n--- ПОПЕРЕДНІ ПІДТВЕРДЖЕНІ ВИПАДКИ (для контексту) ---\nЛікар підтвердив ${pastCases.length} попередніх випадків для цієї зони. Ось їх знахідки як приклади правильної інтерпретації:\n` });
-        pastCases.forEach((c, i) => {
-          parts.push({ text: `\nВипадок ${i + 1} (${c.date}):\nЗнахідки: ${JSON.stringify(c.findings.map(f => ({ structure: f.structure, description: f.description, severity: f.severity })))}\nВисновок: ${c.summary}\n` });
-        });
-        parts.push({ text: "\nВраховуй ці приклади при аналізі нового пацієнта. Звертай увагу на те, які знахідки лікар підтвердив як правильні.\n" });
-      }
-
-      const ne = Object.entries(vnotes).filter(([_, v]) => v.trim());
-      if (ne.length) parts.push({ text: "\n--- НОТАТКИ ЛІКАРЯ ---\n" + ne.map(([k, v]) => `${k}: ${v.trim()}`).join("\n") });
-
-      if (zrefs.length) {
-        parts.push({ text: "\n--- РЕФЕРЕНСИ НОРМИ ---" });
-        for (const r of zrefs.slice(0, 20)) parts.push({ inline_data: { mime_type: "image/jpeg", data: r.data.split(",")[1] } });
-      }
-
-      // Knowledge base rules — includes related detailed structures
       const zoneKb = collectZoneMaterials(kb, study.zone);
-      if (zoneKb.length > 0) {
-        parts.push({ text: "\n--- БАЗА ЗНАНЬ (діагностичні критерії для цієї зони) ---\n" + zoneKb.map(e => `[${e.title}]\n${e.text}`).join("\n\n") + "\n\nВраховуй ці діагностичні критерії при аналізі знімків.\n" });
-      }
 
-      setProg({ s: "send", p: 30 });
-
-      // Send each series with its sequence label
-      for (const seq of usedSeqs) {
-        const imgs = study.series[seq];
-        parts.push({ text: `\n--- СЕРІЯ ${seq} (${imgs.length} зрізів) ---` });
-        for (const img of imgs) parts.push({ inline_data: { mime_type: "image/jpeg", data: img.data.split(",")[1] } });
-      }
-      parts.push({ text: "\nПроаналізуй ВСІ серії та зрізи. У findings вказуй серію та номери зрізів (наприклад slices: 'T2: 3-5, STIR: 12-14'). Порівняй з нормою, знайди ВСІ відхилення." });
-
-      setProg({ s: "ai", p: 55 });
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.15, maxOutputTokens: 8192 } })
+      setProg({ s: "send", p: 20 });
+      const j = await analyzeStudy({
+        apiKey,
+        model: aiModel,
+        study,
+        zoneName: ZONES[study.zone].ua,
+        usedSeqs,
+        zrefs,
+        zoneKb,
+        pastCases,
+        vnotes,
+        sysPrompt: SYS_PROMPT,
+        onProgress: setProg
       });
-      setProg({ s: "proc", p: 80 });
-      const data = await resp.json();
 
-      if (data?.error) throw new Error(data.error.message);
-
-      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const clean = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      let updatedStudy;
-      try {
-        const j = JSON.parse(clean);
-        updatedStudy = { ...study, findings: j.findings || [], summary: j.summary, recommendation: j.recommendation, radio: j.radiopaedia_terms || [], status: "done" };
-      } catch {
-        updatedStudy = { ...study, findings: [{ id: 1, structure: "Аналіз", description: clean, slices: "-", confidence_level: 50, severity: "mild" }], status: "done" };
-      }
+      const updatedStudy = {
+        ...study,
+        findings: j.findings || [],
+        summary: j.summary,
+        recommendation: j.recommendation,
+        radio: j.radiopaedia_terms || [],
+        status: "done"
+      };
       setStudy(updatedStudy);
 
       setProg(null); setScr("results");
@@ -1572,33 +1542,14 @@ export function AppProvider({ children }) {
     setReportText("");
     
     try {
-      const notes = Object.entries(vnotes)
-        .filter(([k, v]) => k.startsWith(study.id) || true) // We just take all non-empty notes. To be safe, maybe we should filter by study ID if we prefixed them. Wait, note keys are `seriesKey()-sliceIdx`.
-        .filter(([k, v]) => v.trim())
-        .map(([k, v]) => `- Зріз ${k}: ${v.trim()}`)
-        .join("\n");
-        
-      const prompt = `Ти — головний лікар-рентгенолог. Твоє завдання — написати офіційний протокол МРТ-дослідження (українською мовою).
-Зона дослідження: ${ZONES[study.zone]?.ua || "Невідома зона"}.
-Пацієнт: ${study.patientName || "Не вказано"}.
-
-Ось чорнові нотатки та знахідки лікаря, зроблені під час перегляду знімків:
-${notes ? notes : "Нотаток немає. Опиши абсолютну норму для цієї анатомічної зони."}
-
-Вимоги до протоколу:
-1. Офіційний медичний стиль.
-2. Розділ "ОПИС" (структурований по всіх основних анатомічних компонентах зони). Якщо в нотатках є патологія — розгорнуто опиши її. Якщо про компонент нічого не сказано в нотатках — опиши його як норму.
-3. Розділ "ВИСНОВОК" (короткий підсумок виявлених патологій або констатація норми).
-Не пиши жодних вступних слів, видай ТІЛЬКИ готовий текст медичного протоколу.`;
-
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.25 } })
+      const resText = await generateMedicalProtocol({
+        apiKey,
+        model: aiModel,
+        study,
+        zoneName: ZONES[study.zone]?.ua || "Невідома зона",
+        vnotes
       });
-      const data = await resp.json();
-      if (data?.error) throw new Error(data.error.message);
-      let resText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      setReportText(resText.trim());
+      setReportText(resText);
     } catch (e) {
       setReportText(`Помилка: ${e.message}`);
     } finally {
@@ -1635,7 +1586,7 @@ ${notes ? notes : "Нотаток немає. Опиши абсолютну но
     showRefP, setShowRefP,
     prevScr, setPrevScr,
     vnotes, setVnotes,
-    recording, setRecording,
+    recording, setRecording, transcribing,
     pdfM, setPdfM,
     pdfOk, setPdfOk,
     toast, setToast,

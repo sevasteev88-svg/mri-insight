@@ -3,6 +3,7 @@ import { AppContext } from "../context/AppContext.jsx";
 import { P } from "../styles/styles.js";
 import { Brain, Settings, AlertCircle, Plus, BookOpen, ExternalLink, Archive, Trash2, RotateCcw, Folder, User, X, ChevronRight, Cloud, CloudOff, RefreshCw, Lock, Search } from "lucide-react";
 import { ZONES, ZONE_GROUPS } from "../constants/anatomy.js";
+import { getModelBadge } from "../services/gemini.js";
 import TI from "./TI.jsx";
 
 export default function Dash() {
@@ -61,7 +62,7 @@ export default function Dash() {
             {syncingCloud ? "СИНХРОНІЗАЦІЯ..." : cloudSyncStatus === "online" ? "CLOUD SYNC" : "LOCAL"}
           </button>
           <span style={{ fontSize: 11, color: "#4aa3df", background: "#15324a", padding: "4px 10px", borderRadius: 4, fontFamily: "'JetBrains Mono',monospace" }}>
-            {aiModel === "gemini-2.5-pro" ? "GEMINI 2.5 PRO" : "GEMINI 2.5 FLASH"}
+            {getModelBadge(aiModel)}
           </span>
           <button onClick={() => setShowSet(true)} style={P.iBtn} title="Налаштування"><Settings size={18} /></button>
           <button onClick={() => setIsLocked(true)} style={{ ...P.iBtn, color: "#f87171", background: "rgba(239,68,68,.1)" }} title="Заблокувати робоче місце"><Lock size={17} /></button>

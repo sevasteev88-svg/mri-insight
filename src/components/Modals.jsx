@@ -4,6 +4,7 @@ import { P } from "../styles/styles.js";
 import { X, FileText, Clipboard, Save, Download, Brain, UserPlus, Trash2, ShieldCheck } from "lucide-react";
 import { ZONES } from "../constants/anatomy.js";
 import { supabase } from "../services/supabase.js";
+import { GEMINI_MODELS } from "../services/gemini.js";
 
 export function ReportModal() {
   const { showReport, setShowReport, reportLoading, reportText, setReportText, study, setStudy, flash } = React.useContext(AppContext);
@@ -124,12 +125,30 @@ export function SettingsModal() {
 
         <label style={{ ...P.lb, marginTop: 14 }}>Модель ІІ</label>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <button onClick={() => { setAiModel("gemini-2.5-pro"); try { localStorage.setItem("mri-model", "gemini-2.5-pro"); } catch {} }} style={{ ...P.sm, padding: "10px 12px", textAlign: "left", justifyContent: "flex-start", background: aiModel === "gemini-2.5-pro" ? "rgba(6,182,212,.14)" : "rgba(255,255,255,.04)", border: aiModel === "gemini-2.5-pro" ? "1px solid rgba(6,182,212,.3)" : "1px solid rgba(255,255,255,.07)" }}>
-            <div><p style={{ fontSize: 13, fontWeight: 600, color: aiModel === "gemini-2.5-pro" ? "#06b6d4" : "#e2e8f0" }}>Gemini 2.5 Pro {aiModel === "gemini-2.5-pro" && "✓"}</p><p style={{ fontSize: 10, color: "#64748b" }}>Найвища точність · рекомендовано для діагностики</p></div>
-          </button>
-          <button onClick={() => { setAiModel("gemini-2.5-flash"); try { localStorage.setItem("mri-model", "gemini-2.5-flash"); } catch {} }} style={{ ...P.sm, padding: "10px 12px", textAlign: "left", justifyContent: "flex-start", background: aiModel === "gemini-2.5-flash" ? "rgba(6,182,212,.14)" : "rgba(255,255,255,.04)", border: aiModel === "gemini-2.5-flash" ? "1px solid rgba(6,182,212,.3)" : "1px solid rgba(255,255,255,.07)" }}>
-            <div><p style={{ fontSize: 13, fontWeight: 600, color: aiModel === "gemini-2.5-flash" ? "#06b6d4" : "#e2e8f0" }}>Gemini 2.5 Flash {aiModel === "gemini-2.5-flash" && "✓"}</p><p style={{ fontSize: 10, color: "#64748b" }}>Швидше та дешевше · для рутинного огляду</p></div>
-          </button>
+          {GEMINI_MODELS.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => {
+                setAiModel(m.id);
+                try { localStorage.setItem("mri-model", m.id); } catch {}
+              }}
+              style={{
+                ...P.sm,
+                padding: "10px 12px",
+                textAlign: "left",
+                justifyContent: "flex-start",
+                background: aiModel === m.id ? "rgba(6,182,212,.14)" : "rgba(255,255,255,.04)",
+                border: aiModel === m.id ? "1px solid rgba(6,182,212,.3)" : "1px solid rgba(255,255,255,.07)"
+              }}
+            >
+              <div>
+                <p style={{ fontSize: 13, fontWeight: 600, color: aiModel === m.id ? "#06b6d4" : "#e2e8f0" }}>
+                  {m.label} {aiModel === m.id && "✓"}
+                </p>
+                <p style={{ fontSize: 10, color: "#64748b" }}>{m.desc}</p>
+              </div>
+            </button>
+          ))}
         </div>
 
         {/* ALLOWED DOCTORS WHITELIST */}

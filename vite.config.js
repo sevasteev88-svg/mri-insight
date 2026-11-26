@@ -14,6 +14,7 @@ export default defineConfig({
         manualChunks(id) {
           if (id.includes('node_modules/@supabase/')) return 'supabase';
           if (id.includes('node_modules/lucide-react/')) return 'icons';
+          if (id.includes('node_modules/@google/genai')) return 'genai';
         },
       },
     },
